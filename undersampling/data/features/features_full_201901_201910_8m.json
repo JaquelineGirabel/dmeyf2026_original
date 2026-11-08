@@ -1,0 +1,149 @@
+{
+  "spec": {
+    "source": "competencia_02_crudo.csv.gz",
+    "source_bytes": 711222839,
+    "sample_clients": 1.0,
+    "months": [
+      201901,
+      201902,
+      201903,
+      201904,
+      201905,
+      201906,
+      201908,
+      201910
+    ],
+    "version": 3
+  },
+  "seconds": 40.45190108299903,
+  "peak_memory_gb": 8.627044677734375,
+  "rows": 1023215,
+  "n_features": 760,
+  "text_columns_converted": [
+    "tmobile_app",
+    "cmobile_app_trx"
+  ],
+  "class_counts": [
+    {
+      "foto_mes": 201901,
+      "clase_ternaria": "BAJA+1",
+      "n": 647
+    },
+    {
+      "foto_mes": 201901,
+      "clase_ternaria": "BAJA+2",
+      "n": 697
+    },
+    {
+      "foto_mes": 201901,
+      "clase_ternaria": "CONTINUA",
+      "n": 122572
+    },
+    {
+      "foto_mes": 201902,
+      "clase_ternaria": "BAJA+1",
+      "n": 699
+    },
+    {
+      "foto_mes": 201902,
+      "clase_ternaria": "BAJA+2",
+      "n": 696
+    },
+    {
+      "foto_mes": 201902,
+      "clase_ternaria": "CONTINUA",
+      "n": 123625
+    },
+    {
+      "foto_mes": 201903,
+      "clase_ternaria": "BAJA+1",
+      "n": 699
+    },
+    {
+      "foto_mes": 201903,
+      "clase_ternaria": "BAJA+2",
+      "n": 774
+    },
+    {
+      "foto_mes": 201903,
+      "clase_ternaria": "CONTINUA",
+      "n": 124149
+    },
+    {
+      "foto_mes": 201904,
+      "clase_ternaria": "BAJA+1",
+      "n": 776
+    },
+    {
+      "foto_mes": 201904,
+      "clase_ternaria": "BAJA+2",
+      "n": 575
+    },
+    {
+      "foto_mes": 201904,
+      "clase_ternaria": "CONTINUA",
+      "n": 124765
+    },
+    {
+      "foto_mes": 201905,
+      "clase_ternaria": "BAJA+1",
+      "n": 575
+    },
+    {
+      "foto_mes": 201905,
+      "clase_ternaria": "BAJA+2",
+      "n": 658
+    },
+    {
+      "foto_mes": 201905,
+      "clase_ternaria": "CONTINUA",
+      "n": 125530
+    },
+    {
+      "foto_mes": 201906,
+      "clase_ternaria": "BAJA+1",
+      "n": 662
+    },
+    {
+      "foto_mes": 201906,
+      "clase_ternaria": "BAJA+2",
+      "n": 589
+    },
+    {
+      "foto_mes": 201906,
+      "clase_ternaria": "CONTINUA",
+      "n": 127119
+    },
+    {
+      "foto_mes": 201908,
+      "clase_ternaria": "BAJA+1",
+      "n": 647
+    },
+    {
+      "foto_mes": 201908,
+      "clase_ternaria": "BAJA+2",
+      "n": 543
+    },
+    {
+      "foto_mes": 201908,
+      "clase_ternaria": "CONTINUA",
+      "n": 130585
+    },
+    {
+      "foto_mes": 201910,
+      "clase_ternaria": "BAJA+1",
+      "n": 620
+    },
+    {
+      "foto_mes": 201910,
+      "clase_ternaria": "BAJA+2",
+      "n": 632
+    },
+    {
+      "foto_mes": 201910,
+      "clase_ternaria": "CONTINUA",
+      "n": 134381
+    }
+  ],
+  "content_sha256": "a131870ec96a56ab2ec6c62065c3f0ad822d4dd4097937dbb03ed59dba1d4f2f"
+}

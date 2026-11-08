@@ -1,0 +1,17 @@
+{
+  "python": "3.12.9",
+  "platform": "macOS-26.7.2-arm64-arm-64bit",
+  "machine": "arm64",
+  "cpu_count": 8,
+  "ram_gb": 24.0,
+  "packages": {
+    "duckdb": "2.0.0",
+    "lightgbm": "4.7.0",
+    "optuna": "5.0.0",
+    "numpy": "2.5.4",
+    "pandas": "3.1.0",
+    "pyarrow": "26.0.0",
+    "scipy": "1.18.1",
+    "psutil": "7.2.2"
+  }
+}

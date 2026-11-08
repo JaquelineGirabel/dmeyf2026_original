@@ -1,0 +1,101 @@
+{
+  "data_file": "data/competencia_02_crudo.csv.gz",
+  "features_dir": "data/features",
+  "results_dir": "results",
+  "name": "",
+  "sample_clients": 1.0,
+  "train_months": [
+    201901,
+    201902,
+    201903,
+    201904,
+    201905,
+    201906
+  ],
+  "valid_month": 201908,
+  "test_month": 201910,
+  "positive_classes": [
+    "BAJA+1",
+    "BAJA+2"
+  ],
+  "profit_hit": 1072500,
+  "profit_cost": 27500,
+  "band": [
+    0.05,
+    0.06,
+    0.07,
+    0.08,
+    0.09
+  ],
+  "bagging_baseline": true,
+  "bagging_freq": 1,
+  "r_range": [
+    0.01,
+    1.0
+  ],
+  "r_grid": [
+    1.0,
+    0.8,
+    0.6,
+    0.4,
+    0.2,
+    0.1,
+    0.08,
+    0.05,
+    0.03,
+    0.02,
+    0.01
+  ],
+  "n_trials": 100,
+  "optuna_seed": 12345,
+  "train_seed": 17,
+  "search_space": {
+    "num_leaves": [
+      8,
+      256,
+      "int",
+      true
+    ],
+    "learning_rate": [
+      0.01,
+      0.3,
+      "float",
+      true
+    ],
+    "min_data_in_leaf": [
+      20,
+      5000,
+      "int",
+      true
+    ],
+    "feature_fraction": [
+      0.1,
+      1.0,
+      "float",
+      false
+    ],
+    "bagging_fraction": [
+      0.2,
+      1.0,
+      "float",
+      false
+    ]
+  },
+  "max_rounds": 3000,
+  "early_stopping_rounds": 100,
+  "top_k": 3,
+  "n_seeds": 20,
+  "seed_base": 100,
+  "delta": 0.01,
+  "time_reduction": 0.3,
+  "bootstrap_samples": 10000,
+  "threads": 0,
+  "duckdb_memory_limit": "8GB",
+  "stages": [
+    "features",
+    "search",
+    "seeds",
+    "curve",
+    "analyze"
+  ]
+}
