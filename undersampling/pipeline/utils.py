@@ -86,9 +86,24 @@ def update_json(path: Path, **values):
 
 
 def append_row(path: Path, row: dict):
-    """Appends one result row to a CSV right away, so nothing is lost if the run stops."""
-    pd.DataFrame([row]).to_csv(path, mode='a', header=not path.exists(), index=False)
+    """Appends one result row to a CSV right away, so nothing is lost if the run stops.
+
+    The line is written in a single call and forced to disk (fsync), so a crash leaves either the whole
+    row or nothing; read_rows also drops any incomplete last line, just in case.
+    """
+    header = not path.exists() or path.stat().st_size == 0
+    text = pd.DataFrame([row]).to_csv(header=header, index=False)
+    with open(path, 'a') as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def read_rows(path: Path):
-    return pd.read_csv(path) if path.exists() else pd.DataFrame()
+    """Reads a results CSV. A last line cut short by a crash (missing values) is ignored."""
+    if not path.exists() or path.stat().st_size == 0:
+        return pd.DataFrame()
+    df = pd.read_csv(path)
+    if len(df) and df.iloc[-1].isna().any() and not df.iloc[:-1].isna().any(axis=None):
+        df = df.iloc[:-1]
+    return df

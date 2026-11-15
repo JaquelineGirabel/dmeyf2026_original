@@ -1,8 +1,8 @@
 """Loading the features into memory and building LightGBM's datasets once.
 
 The training Dataset is binned a single time and reused by every Optuna trial and every seed run.
-Sampling (bagging / undersampling) happens inside LightGBM, tree by tree, so the full training data
-stays in memory and is never copied per trial.
+Sampling happens inside LightGBM tree by tree (r_apply="per_tree"), or as a subset of this same binned
+Dataset (r_apply="before"), so the training data is never re-binned or copied per trial.
 """
 from dataclasses import dataclass
 

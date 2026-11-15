@@ -1,4 +1,4 @@
-"""AUC and the profit curve (highest point and average over the 5%-9% band).
+"""AUC and the profit curve (on a grid of shares of clients, its highest point, and the 5%-9% band average).
 
 Both only use the order of the clients, so the inflated probabilities of undersampled models
 don't affect them. Ties are broken by row order (rows are sorted by client), so results are
@@ -23,6 +23,17 @@ def profit_curve(baja2, scores, hit, cost):
     order = np.argsort(-np.asarray(scores), kind='stable')
     gains = np.where(np.asarray(baja2)[order] == 1, hit, -cost)
     return np.cumsum(gains)
+
+
+# Shares of clients at which every training's profit curve is stored: 0.1%, 0.2%, ..., 20%.
+LIST_GRID = np.arange(1, 201) / 1000
+
+
+def profit_at_shares(baja2, scores, hit, cost, grid=LIST_GRID):
+    """Profit contacting the top share of clients, for each share of the grid."""
+    curve = profit_curve(baja2, scores, hit, cost)
+    idx = np.maximum(np.round(np.asarray(grid) * len(curve)).astype(int), 1) - 1
+    return curve[idx]
 
 
 def profit_metrics(baja2, scores, hit, cost, band):

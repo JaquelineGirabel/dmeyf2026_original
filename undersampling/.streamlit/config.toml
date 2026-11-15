@@ -1,0 +1,20 @@
+# Dashboard look (read by Streamlit when launched from the undersampling folder, as run_dashboard.sh does).
+[theme]
+base = "light"
+primaryColor = "#1f3a5f"              # navy: selected tab, focus, links
+backgroundColor = "#eef3f9"           # page: light blue-gray
+secondaryBackgroundColor = "#ffffff"  # inputs and widgets: white on the page
+textColor = "#1b2430"
+borderColor = "#dfe5ed"
+baseRadius = "0.4rem"
+dataframeHeaderBackgroundColor = "#f5f8fc"
+
+[theme.sidebar]
+backgroundColor = "#e2eaf4"
+secondaryBackgroundColor = "#ffffff"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

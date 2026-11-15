@@ -1,0 +1,65 @@
+{
+  "data_file": "data/competencia_02_crudo.csv.gz",
+  "sample_clients": 0.1,
+  "train_months": [
+    201901,
+    201902,
+    201903,
+    201904,
+    201905,
+    201906
+  ],
+  "valid_month": 201908,
+  "test_month": 201910,
+  "positive_classes": [
+    "BAJA+1",
+    "BAJA+2"
+  ],
+  "profit_hit": 1072500,
+  "profit_cost": 27500,
+  "band": [
+    0.05,
+    0.06,
+    0.07,
+    0.08,
+    0.09
+  ],
+  "bagging_baseline": true,
+  "bagging_freq": 1,
+  "n_trials": 100,
+  "master_seed": 6389,
+  "search_space": {
+    "num_leaves": [
+      8,
+      256,
+      "int",
+      true
+    ],
+    "learning_rate": [
+      0.01,
+      0.3,
+      "float",
+      true
+    ],
+    "min_data_in_leaf": [
+      20,
+      5000,
+      "int",
+      true
+    ],
+    "feature_fraction": [
+      0.1,
+      1.0,
+      "float",
+      false
+    ],
+    "bagging_fraction": [
+      0.2,
+      1.0,
+      "float",
+      false
+    ]
+  },
+  "max_rounds": 3000,
+  "early_stopping_rounds": 100
+}
