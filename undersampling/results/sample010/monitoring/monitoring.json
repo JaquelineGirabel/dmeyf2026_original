@@ -1976,7 +1976,7 @@
       "n_features_used": 219,
       "trial": 42,
       "seed": 1047210558,
-      "train_seconds": 4.449611832998926
+      "train_seconds": 1.4208004590473138
     },
     "grid_per_tree": {
       "by_feature": {
@@ -2115,7 +2115,7 @@
       "study": "grid_per_tree_r0.1",
       "r": 0.1,
       "seed": 1047210558,
-      "train_seconds": 1.676787250005873
+      "train_seconds": 0.5467602090211585
     }
   },
   "predictions": {

@@ -12,7 +12,7 @@ import numpy as np
 
 BASE_DIR = Path(__file__).resolve().parent
 
-ALL_STAGES = ['features', 'search', 'validate', 'test', 'final', 'analyze']
+ALL_STAGES = ['features', 'search', 'validate', 'test', 'final', 'analyze', 'monitor']
 R_MODES = ['grid', 'optuna']
 R_APPLY = ['per_tree', 'before']
 
@@ -68,14 +68,13 @@ class Config:
     master_seed: int = 6389
 
     # Choosing r (validation) and confirming it (test)
-    n_seeds_valid: int = 10             # seeds per candidate on validation (the first n_seeds_valid of the test seeds)
+    n_seeds_valid: int = 20             # seeds per candidate on validation (the first n_seeds_valid of the test seeds)
     n_seeds: int = 20                   # seeds per configuration on test
-    top_k: int = 3                      # configurations of the winner and of the baseline compared on test
-    delta: float = 0.01                 # "about the same": loses at most 1%
+    # "About the same": loses at most what the baseline itself varies between seeds (pipeline/analysis.py,
+    # tolerances). A number here replaces that by a fixed share for profit and AUC (e.g. 0.01 = 1%).
+    delta: float | None = None
     time_reduction: float = 0.30        # "clearly less time": at least 30% less
     choice_confidence: float = 0.95     # interval level when judging each r on validation (0.997 = Bonferroni for 15 r)
-    near_fastest: float = 0.05          # r values this close to the fastest (share of baseline time) count as tied
-    flat_share: float = 0.05            # time "flattens" when going lower saves less than this share of baseline time
     bootstrap_samples: int = 10_000
 
     # Machine
@@ -157,12 +156,10 @@ def build_parser():
     p.add_argument('--master-seed', type=int)
     p.add_argument('--n-seeds-valid', type=int)
     p.add_argument('--n-seeds', type=int)
-    p.add_argument('--top-k', type=int)
-    p.add_argument('--delta', type=float)
+    p.add_argument('--delta', type=float, help='fixed tolerance for profit and AUC (default: the baseline\'s own '
+                                               'variation between seeds)')
     p.add_argument('--time-reduction', type=float)
     p.add_argument('--choice-confidence', type=float, help='interval level when choosing r (default 0.95)')
-    p.add_argument('--near-fastest', type=float)
-    p.add_argument('--flat-share', type=float)
     p.add_argument('--max-rounds', type=int)
     p.add_argument('--early-stopping-rounds', type=int)
     p.add_argument('--threads', type=int)
@@ -198,8 +195,8 @@ def _validate(cfg):
         raise ValueError(f'r_mode must be one of {R_MODES} and r_apply one of {R_APPLY}')
     if any(not 0 < r <= 1 for r in cfg.r_list) or not cfg.r_values:
         raise ValueError('r_list needs at least one value in (0, 1)')
-    if cfg.top_k < 1 or cfg.n_seeds_valid < 2 or cfg.n_seeds < cfg.n_seeds_valid:
-        raise ValueError('top_k must be >= 1, n_seeds_valid >= 2 and n_seeds >= n_seeds_valid')
+    if cfg.n_seeds_valid < 2 or cfg.n_seeds < cfg.n_seeds_valid:
+        raise ValueError('n_seeds_valid must be >= 2 and n_seeds >= n_seeds_valid')
 
 
 def _month_index(yyyymm):

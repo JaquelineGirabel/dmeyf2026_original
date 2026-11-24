@@ -1,0 +1,32 @@
+{
+  "rule": "best configuration; test scores averaged over its seeds; contact its share of clients (where its validation profit curve, averaged over its validation seeds, is highest)",
+  "test_month": 201910,
+  "n_seeds": 20,
+  "n_seeds_share": 20,
+  "sides": {
+    "baseline": {
+      "study": "baseline",
+      "trial": 33,
+      "r": 1.0,
+      "share": 0.033,
+      "n_contacted": 4476,
+      "baja2_contacted": 373,
+      "baja2_total": 632,
+      "profit": 287210000.0,
+      "best_share": 0.036104782759357974,
+      "best_profit": 289932500.0
+    },
+    "winner": {
+      "study": "grid_per_tree_r0.025",
+      "trial": 43,
+      "r": 0.025,
+      "share": 0.034,
+      "n_contacted": 4612,
+      "baja2_contacted": 375,
+      "baja2_total": 632,
+      "profit": 285670000.0,
+      "best_share": 0.02999270089137599,
+      "best_profit": 290730000.0
+    }
+  }
+}

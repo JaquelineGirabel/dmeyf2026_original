@@ -2,31 +2,31 @@
   "rule": "best configuration; test scores averaged over its seeds; contact its share of clients (where its validation profit curve, averaged over its validation seeds, is highest)",
   "test_month": 201910,
   "n_seeds": 20,
-  "n_seeds_share": 10,
+  "n_seeds_share": 20,
   "sides": {
     "baseline": {
       "study": "baseline",
       "trial": 42,
       "r": 1.0,
-      "share": 0.016,
-      "n_contacted": 216,
-      "baja2_contacted": 33,
+      "share": 0.014,
+      "n_contacted": 189,
+      "baja2_contacted": 32,
       "baja2_total": 73,
-      "profit": 30360000.0,
+      "profit": 30002500.0,
       "best_share": 0.056011838697743246,
       "best_profit": 34182500.0
     },
     "winner": {
-      "study": "grid_per_tree_r0.03",
-      "trial": 93,
-      "r": 0.03,
-      "share": 0.011,
-      "n_contacted": 149,
+      "study": "grid_per_tree_r0.1",
+      "trial": 16,
+      "r": 0.1,
+      "share": 0.016,
+      "n_contacted": 216,
       "baja2_contacted": 31,
       "baja2_total": 73,
-      "profit": 30002500.0,
-      "best_share": 0.03344432112467628,
-      "best_profit": 33770000.0
+      "profit": 28160000.0,
+      "best_share": 0.039289678135405105,
+      "best_profit": 35997500.0
     }
   }
 }

@@ -14,9 +14,11 @@ This document describes an experiment on undersampling for training a churn mode
 
 ### What it says, part by part
 - **"Each tree samples only a fraction r of the CONTINUA":** LightGBM builds the model one tree at a time. Each tree draws at random its own share of the CONTINUA, while BAJA+1 and BAJA+2 are kept as in the baseline (see section 4).
-- **"About the same AUC and profit":** on the test month, neither the profit nor the AUC is lower than the baseline's by more than a margin **δ = 1%**.
+- **"About the same AUC and profit":** on the test month, neither the profit nor the AUC is lower than the baseline's by more than a margin **δ**: **what the baseline itself varies between seeds**. A loss no bigger than what changing the seed already causes in the baseline counts as no loss.
+  - **How δ is measured:** the baseline's best configuration, trained with the 20 seeds and scored on August; δ of each measure = its standard deviation over those seeds divided by its mean. It uses no undersampling result and no test score, so it is fixed before choosing r. The same δ is used to choose r, to confirm on test and on the r curve.
+  - **On the full data:** profit **δ = 1.16%** (standard deviation $2.41M over a mean of $207.3M); AUC **δ = 0.043%** (0.00040 over 0.9380). `summary.md` reports the values of each run. `--delta 0.01` replaces both by a fixed 1%.
 - **"Clearly less time":** total time (preparing the data, the Optuna search, the final model and prediction) is at least **30% lower** than the baseline's.
-- **"Below some r the time stops going down":** below some r, making r smaller saves less than **5% of the baseline's time**. Training time has two parts:
+- **"Below some r the time stops going down":** the fastest r of all (the **time floor**) is not the smallest r tried: below it, making r smaller no longer reduces the time. Training time has two parts:
   - **one that shrinks with r:** building each tree from the sampled rows;
   - **one that doesn't:** updating the score of **every** client after each tree, scoring the validation month, and predicting.
 
@@ -32,7 +34,7 @@ time:     ╲╲╲╲╲╲╲╲╲╲╲╲╲╲╲╲━━━━━━━�
                          ↑ useful zone ↑
 ```
 
-The recommendation is an r inside the **useful zone**: where time has already stopped dropping and profit hasn't started to.
+This picture is what the hypothesis **expects**. It is not how r is chosen: r is chosen on the validation month only, with the rule in section 6, and the result is reported in three parts, one per claim (section 7).
 
 ---
 
@@ -46,16 +48,15 @@ An overview of the whole flow for the two modes (`--r-mode`). Section 6 has the 
 | 2. Baseline search (r = 1) | 100 trials scored on validation AUC | the same search, reused |
 | 3. Undersampling searches | one search per r on the list, r fixed (15 searches) | one search: Optuna picks r from the same list; its first 15 trials try each r once |
 | 4. Candidates | the best trial of each r's search | the best trial with each r |
-| 5. Validation (201908) | each candidate and the baseline × 10 seeds | same |
+| 5. Validation (201908) | each candidate and the baseline × 20 seeds | same |
 | 6. Choose r | profit condition and least time; time = search + mean training | same rule; time = mean training only (one search serves every r) |
-| 7. Test (201910) | winner's top 3 against the baseline's top 3, × 20 seeds; profit **and** AUC must hold; ≥ 30% less time | same; the winner's search time is the whole undersampling search |
+| 7. Test (201910) | the winner's best configuration against the baseline's, × 20 seeds each; profit **and** AUC must hold; ≥ 30% less time | same; the winner's search time is the whole undersampling search |
 | 8. r curve | best configuration of each r × 20 seeds on test | same |
 | 9. Verdict | the whole exploration's time is reported as a side figure | same |
 
 **The choice rule in step 6:**
-1. Each r is judged on its own: it passes if its validation profit (at its own share of clients, see "How profit is measured") isn't worse than the baseline's beyond 1%.
+1. Each r is judged on its own: it passes if its validation profit (at its own share of clients, see "How profit is measured") isn't worse than the baseline's beyond δ, what the baseline itself varies between seeds (1.16% on the full data).
 2. Among the r values that pass, take the fastest.
-3. If several are within 5% of the baseline's time of the fastest, take the largest of them.
 
 **`--r-apply`** doesn't change these steps, only how r is applied in every training: `per_tree` (default: each tree draws its own CONTINUA) or `before` (one fixed sample of CONTINUA, drawn before training). See section 4.
 
@@ -68,10 +69,10 @@ Every seed is derived from the master seed 6389 (see "Seeds" in section 5).
 | 2. Baseline search | **Optuna seed** (which hyperparameters each trial tries) and **search training seed** (LightGBM's randomness in every trial) | same (the search is shared) |
 | 3. Undersampling searches | the same **Optuna seed** in each of the 15 searches, so their first random trials propose the same hyperparameters and differ only in r; the **search training seed** in every trial | the **Optuna seed** in the single search (its first 15 trials have r forced; their other hyperparameters come from the seed); the **search training seed** in every trial |
 | 4. Candidates | no seed (the best trial by validation AUC) | same |
-| 5. Validation | **final seeds 1–10**, the same for every candidate, so each r is paired with the baseline seed by seed | same |
+| 5. Validation | **final seeds 1–20**, the same for every candidate, so every model has the same 20 draws of randomness | same |
 | 6. Choose r | **bootstrap seed** (the 95% intervals) | same |
-| 7. Test | **final seeds 1–20** for the winner's and the baseline's top 3; the rank-1 configurations are candidates, so their seeds 1–10 are the trainings of step 5, reused | same |
-| 8. r curve | **final seeds 1–20** for every candidate (seeds 1–10 reused from step 5) | same |
+| 7. Test | **final seeds 1–20** for the winner's and the baseline's best configurations; both are candidates, so their 20 seeds are the trainings of step 5, reused | same |
+| 8. r curve | **final seeds 1–20** for every candidate (the trainings of step 5, reused: each training is scored on both months) | same |
 | 9. Verdict | **bootstrap seed** | same |
 
 With `--r-apply before`, the seed of each training also decides which CONTINUA go into its fixed sample: the search training seed in the search trials, and each final seed in the final models.
@@ -176,9 +177,10 @@ Each tree keeps the baseline's positives and r times its CONTINUA. Nothing is cu
 - **Trial score: AUC on the validation month,** against the training target (BAJA+1 + BAJA+2). It also drives early stopping, which decides the number of trees. AUC against BAJA+2 alone, validation profit, trees and times are also recorded for every trial.
 
 ### How profit is measured
-**A model is a configuration** (a set of hyperparameters). Its seeds give its distribution: "the 3 best
-configurations × 20 seeds" are 3 models with 20 results each. Every decision about a model is based on that
-distribution, never on a single seed.
+**A model is one configuration** (a set of hyperparameters) **trained with 20 seeds**: its 20 results are its
+distribution. Every comparison is between two models, distribution against distribution: the seeds of two models
+are never paired (seed 4 of one model has nothing in common with seed 4 of another), and different configurations
+are never mixed or averaged together.
 
 - **The profit curve of one training:**
   1. The model gives every client of the month a probability.
@@ -186,10 +188,10 @@ distribution, never on a single seed.
   3. Contacting the top 0.1%, 0.2%, ..., 20% of that list, the profit is computed at each step (+1,072,500 per
      BAJA+2 contacted, −27,500 per any other client contacted). It rises while BAJA+2 are found, then falls.
 - **The model's share of clients (its list):** fixed on the validation month, from its distribution.
-- **The model's profit:** the profit of contacting that share, seed by seed.
+- **The model's profit:** the profit of contacting that share, one value per seed (20 values).
 
-**The procedure, with an example** (configuration 1 of r = 0.1, on the 10% sample):
-1. **In August:** its 10 seeds each have a profit curve (profit contacting 0.1%, 0.2%, … of the clients).
+**The procedure, with an example** (the best configuration of r = 0.1, on the 10% sample):
+1. **In August:** its 20 seeds each have a profit curve (profit contacting 0.1%, 0.2%, … of the clients).
    Averaged, that curve peaks at 1.7%. That's this model's list size. From here on it's fixed, and October can't
    change it.
 2. **In October (13,515 clients):** each of its 20 seeds scores every October client, sorts them, and contacts
@@ -197,8 +199,8 @@ distribution, never on a single seed.
    is the same for all 20 seeds; the specific clients can vary a bit between seeds, because each seed ranks them
    slightly differently.
 3. **That gives 20 profits:** the model's distribution in October.
-4. **The baseline's configuration 1 does the same with its own %** (1.6%, also set in August). The two
-   distributions are compared seed by seed.
+4. **The baseline's best configuration does the same with its own %** (1.6%, also set in August). The two
+   distributions of 20 profits are compared: their means, taking into account how much each one spreads.
 
 - **On the validation month** each model's profit, per seed, is the profit at its own share (the share was
   chosen with those same curves, so it's the same for every r, baseline included). That's what chooses r.
@@ -227,7 +229,7 @@ Every seed is derived from one **master seed, 6389** (configurable), with numpy'
 |---|---|---|---|
 | **Optuna seed** | which hyperparameters Optuna proposes (its first trials are random) | every search | every search starts with the same proposals, so their first trials differ only in r |
 | **Search training seed** | LightGBM's randomness inside a trial: which rows each tree samples, which features each tree uses, and the fixed sample in `before` mode | every trial | differences between trials come from the hyperparameters, not from luck |
-| **Final seeds** (10 / 20) | the same randomness, varied on purpose: the chosen configurations are retrained 10 or 20 times | validation (first 10) and test (20) | measures how much results vary by chance; pairs comparisons (r = 0.2 with seed *k* against r = 1 with seed *k*) |
+| **Final seeds** (20) | the same randomness, varied on purpose: the chosen configurations are retrained 20 times | validation and test (the same 20 trainings, scored on both months) | gives each model its distribution: how much its result varies by chance |
 | **Bootstrap seed** | the resampling behind the 95% interval | analysis | the interval comes out identical when the analysis is rerun |
 
 A training with a given configuration and seed produces the same model whichever month it's scored on, so each one is trained once and scored on both validation and test. Choosing r only reads the validation scores.
@@ -264,16 +266,15 @@ The same list for both modes, with small steps at small r (where profit should s
 4. **grid:** one search per r of the list, with r fixed. **optuna:** one search where Optuna picks r from the list.
 
 **Choosing r (validation month, 201908)**
-5. Each candidate (the baseline's best configuration, and the best configuration of each r) is trained with **10 seeds** on 201901–201906 and scored on 201908.
+5. Each candidate (the baseline's best configuration, and the best configuration of each r) is trained with **20 seeds** on 201901–201906 and scored on 201908.
 6. **The choice rule** (decided in advance, reads only validation):
-   1. **Condition:** each r is judged on its own: it passes if its validation profit (at its own share of clients) is not worse than the baseline's beyond δ (paired by seed, 95% interval). Every r counts: one r that fails doesn't rule out the others, because each r has its own search and one unlucky search shouldn't block the rest.
+   1. **Condition:** each r is judged on its own: it passes if its validation profit (at its own share of clients) is not worse than the baseline's beyond δ (its 20 profits against the baseline's 20, 95% interval). Every r counts: one r that fails doesn't rule out the others, because each r has its own search and one unlucky search shouldn't block the rest.
       - With 15 r values, one of them can pass by chance. The test month catches that, since it took no part in the choice. For extra protection already at this step, `--choice-confidence 0.997` makes each interval stricter (Bonferroni correction for 15 comparisons).
    2. **Goal:** among the r values that pass, the one with the **least measured time**.
-   3. **Safety margin:** if several are within 5% of the baseline's time of the fastest, take the **largest**: it saves about the same time and sits further from where profit breaks.
 
 **Confirming on test (201910)**
-7. **Winner against baseline:** the winner's 3 best configurations × 20 seeds against the baseline's 3 best × 20, paired by rank and seed (60 pairs). In optuna mode, the winner's best configurations are the best trials with the winning r (fewer if Optuna tried it fewer times).
-   - **Profit and AUC:** paired differences, 95% interval and Wilcoxon test.
+7. **Winner against baseline:** the winner's best configuration × 20 seeds against the baseline's best configuration × 20 seeds. In optuna mode, the winner's best configuration is the best trial with the winning r.
+   - **Profit and AUC:** difference of the two means, with a 95% interval that accounts for the spread of both distributions.
    - **Time:** search + mean final training of each. In optuna mode the winner's search is the whole undersampling search, because that's how its r and hyperparameters were found.
 8. **r curve:** each candidate × 20 seeds on 201910: profit, AUC and time against r. It describes the results; it doesn't choose anything.
 9. **Verdict.** The time of the whole exploration (all searches and trainings) is reported as a side figure: once r is known, it isn't searched again for every new training.
@@ -283,24 +284,24 @@ The same list for both modes, with small steps at small r (where profit should s
 ## 7. How the hypothesis is confirmed or refuted
 
 ### The winner against the baseline (test month)
-- With the paired differences (winner − baseline, 3 models × 20 seeds, paired by rank and seed) of profit (each model at its own share, fixed in August) and of AUC: **95% interval of the mean difference** (bootstrap) and **Wilcoxon signed-rank test**.
-- **"About the same"** means the lower end of the interval is above **−δ** (δ = 1% of the baseline's mean), for **both** profit and AUC. The highest point is reported too.
+- Two models, each with its 20 seeds: the winner's best configuration and the baseline's. For profit (each model at its own share, fixed in August) and AUC: **difference of the two means** and its **95% interval**, by bootstrap resampling each model's 20 values independently (seeds are not paired).
+- **"About the same"** means the lower end of the interval is above **−δ** (δ × the baseline's mean, with each measure's own δ: see "What it says, part by part"), for **both** profit and AUC. The highest point is reported too.
 
-| Confirmed if… | Refuted if… |
-|---|---|
-| Some r passes on validation | No r passes: none keeps the baseline's profit |
-| On test, both intervals (profit and AUC) have their lower end above −δ | Either goes below −δ |
-| Total time of the winner is at least 30% lower | It saves less than 30% |
 
 ### The r curve (test month)
 - **r values that hold:** each r judged on its own, the ones whose profit and AUC both keep their interval above −δ against the baseline.
-- **r_flat (where time flattens):** going down from r = 1, the first r below which no smaller r saves more than **5% of the baseline's time**.
-- **Useful zone:** the r values that hold and are at or below r_flat (time has already flattened).
+- **r_flat (the time floor):** the r with the least time (search + training) among all the r tried. Time is the same number in both months, so the floor is too.
+- **Below the floor:** the r values smaller than r_flat, described in both months: how many keep profit on validation (the choice rule) and how many keep profit and AUC on test.
 
-| Confirmed if… | Refuted if… |
-|---|---|
-| Time flattens: r_flat is above the smallest r of the list | Time keeps dropping meaningfully down to the last r |
-| Some r at or below r_flat holds: there is a useful zone | No r holds once time has flattened: no useful zone |
+### The result, in three parts (one per claim of the hypothesis)
+
+| Part | Confirmed if… | Refuted if… | Otherwise |
+|---|---|---|---|
+| 1. About the same AUC and profit in clearly less time | Some r passes on validation, and the winner holds on test and saves at least 30% | No r passes, or the winner fails on test | — |
+| 2. Below some r the time stops going down | r_flat is above the smallest r of the list | The fastest r is the smallest of the list | — |
+| 3. Going below that point only risks the result | No r below the floor holds, in either month | All of them hold in both months | **Not observed:** the months disagree, or some hold and some don't |
+
+- **Why part 3 is described and not tested like the others:** below the floor the r values are close to the tolerance, so whether each one "holds" can change from one month to the next. The useful zone of earlier versions (the r at or below r_flat that hold on test) was dropped for that reason: it was not stable between months, and the chosen r could fall outside it without any contradiction, since r is chosen on validation.
 
 ---
 
@@ -308,6 +309,7 @@ The same list for both modes, with small steps at small r (where profit should s
 - **One test month:** the result may depend on 201910.
 - **The validation month also drives early stopping,** so validation scores are a bit optimistic. They are equally so for every r, so the choice stays fair, and the test month confirms it independently.
 - **Each search is run once,** so part of the time difference between two searches can come from where each search wandered. The 30% threshold and time per tree help read it.
+- **Each time is measured once, on a machine whose load varies** (other work on the same Mac, or idle at night). The time floor depends on those single measurements; re-measuring only the values that look odd would bias it, so all are kept as measured.
 - **In optuna mode, some r values may get few trials;** the curve shows how many trials back each point.
 - **`min_data_in_leaf`** counts the rows each tree uses. Every r gets its own search, so it can adapt, but at very small r a tree may still be unable to split; the dashboard flags it.
 - **The cost of the whole exploration is not part of the claim.** The claim compares one training process at the chosen r with the baseline's.
@@ -331,14 +333,11 @@ All of these can be set when running the code:
 | `bagging_freq` | `--bagging-freq` | 1 |
 | Optuna trials per search (N) | `--n-trials` | 100 |
 | Master seed | `--master-seed` | 6389 |
-| Seeds to choose r (validation) | `--n-seeds-valid` | 10 |
+| Seeds to choose r (validation) | `--n-seeds-valid` | 20 |
 | Seeds to confirm (test) | `--n-seeds` | 20 |
-| Configurations compared on test | `--top-k` | 3 |
-| δ | `--delta` | 1% |
+| δ | `--delta` | what the baseline varies between seeds (profit 1.16%, AUC 0.043% on the full data) |
 | Required time reduction | `--time-reduction` | 30% |
 | Interval level when choosing r | `--choice-confidence` | 95% (0.997 for the Bonferroni correction) |
-| Tie margin when choosing r | `--near-fastest` | 5% of the baseline's time |
-| "Time flattens" threshold | `--flat-share` | 5% of the baseline's time |
 | Threads | `--threads` | all available |
 
 ---
@@ -397,10 +396,10 @@ They all share the baseline search and its trainings in `results/full/`, so whic
 .venv/bin/python main.py --help                                   # every option
 ```
 - **Every parameter of section 9 can be set from the command line,** or with `--config file.json` holding any of the fields in `config.py`.
-- **`--stages`** runs only some stages: `features`, `search`, `validate`, `test`, `final`, `analyze`.
+- **`--stages`** runs only some stages: `features`, `search`, `validate`, `test`, `final`, `analyze`, `monitor`.
 - **Rerunning the same command resumes where it stopped:** finished trials and trainings are not repeated, even after a crash (see "If the VM dies").
 - **Running another mode on the same data reuses what's shared:** the baseline search and its trainings run only once.
-- **Quick check that everything works (about a minute):** `--sample-clients 0.1 --name smoke --n-trials 4 --n-seeds-valid 3 --n-seeds 4 --top-k 2 --r-list 0.5 0.1 0.02 --max-rounds 200 --early-stopping-rounds 20`.
+- **Quick check that everything works (about a minute):** `--sample-clients 0.1 --name smoke --n-trials 4 --n-seeds-valid 3 --n-seeds 4 --r-list 0.5 0.1 0.02 --max-rounds 200 --early-stopping-rounds 20`.
 - **Expected duration on the full data** (Mac M3, 8 cores): about 15–18 h in optuna mode and about 35 h in grid mode with the 15 r values. Fewer r values, fewer trials, or a VM with more cores bring it down.
 
 ### What `main.py` does, step by step
@@ -409,11 +408,11 @@ They all share the baseline search and its trainings in `results/full/`, so whic
 3. **Stage `features`:** builds `data/features/<…>.parquet` from the raw CSV, or reuses it if nothing it depends on changed.
 4. **Loads the data:** training, validation and test months, the 0/1 target and the BAJA+2 flag; bins the training data for LightGBM once.
 5. **Stage `search`:** the baseline search, then (grid) one search per r or (optuna) the search where Optuna picks r. Every trial is saved in `optuna.db` and exported to `trials/<study>.csv`.
-6. **Stage `validate`:** trains each candidate with the 10 validation seeds and scores it on both months. Each training is appended to `runs.csv` as soon as it finishes.
-7. **Stage `test`:** applies the choice rule on the validation scores to find the winner, then trains, with the 20 test seeds, the winner's and the baseline's 3 best configurations and every candidate (the curve). Trainings already done in `validate` are reused.
+6. **Stage `validate`:** trains each candidate with the 20 seeds and scores it on both months. Each training is appended to `runs.csv` as soon as it finishes.
+7. **Stage `test`:** applies the choice rule on the validation scores to find the winner, then trains, with the 20 test seeds, every candidate (the curve; the winner's and the baseline's best configurations are candidates). Trainings already done in `validate` are reused.
 8. **Saves the times and peak memory** in `timings.json`.
 9. **Stage `final`:** the list of clients to contact in the test month for the chosen model and the baseline (see "How profit is measured").
-10. **Stage `analyze`:** the choice table, the winner-vs-baseline comparison, the curve with the r values that hold, r_flat and the useful zone, and the verdict, in `summary.json` and `summary.md`.
+10. **Stage `analyze`:** the choice table, the winner-vs-baseline comparison, the curve with the r values that hold and r_flat, the r values below the floor in both months, and the verdict in three parts, in `summary.json` and `summary.md`.
 
 ### What a run writes
 
@@ -426,7 +425,7 @@ They all share the baseline search and its trainings in `results/full/`, so whic
 | `results/<base>/scores/` | every training's client scores on each month (the final list reuses them) |
 | `results/<base>/<mode>_<r_apply>/final_list.json`, `final_list_<side>.csv` | the final list of clients to contact in the test month, and its profit |
 | `results/<base>/shared_config.json` | the values every experiment in the folder must share |
-| `results/<base>/monitoring/monitoring.json` | monitoring metrics written by `monitor.py` (see below) |
+| `results/<base>/monitoring/monitoring.json` | monitoring metrics written by the `monitor` stage (see below) |
 | `results/<base>/<mode>_<r_apply>/summary.md`, `summary.json` | choice, comparison, curve and verdict |
 | `results/<base>/<mode>_<r_apply>/timings.json`, `environment.json`, `config.json`, `run.log` | times, peak memory, machine, library versions, parameters, log |
 
@@ -438,23 +437,23 @@ They all share the baseline search and its trainings in `results/full/`, so whic
 On your own machine:
 ```
 ./dashboard/run_dashboard.sh          # http://localhost:8501
-```
-- **On a Mac, the browser opens by itself;** elsewhere, open http://localhost:8501. The terminal stays busy while the dashboard runs; stop it with Ctrl+C.
+```- **On a Mac, the browser opens by itself;** elsewhere, open http://localhost:8501. The terminal stays busy while the dashboard runs; stop it with Ctrl+C.
 - **It only listens on the machine itself** (localhost), so it's never exposed to the network.
 - `PORT=8502 ./dashboard/run_dashboard.sh` uses another port.
 
 ### Monitoring metrics (dashboard tab "Monitoreo")
-`monitor.py` takes the same flags as `main.py` and writes `results/<base>/monitoring/monitoring.json`:
+`main.py` computes them in its last stage, `monitor`, and writes `results/<base>/monitoring/monitoring.json`, so the dashboard has them as soon as a run ends. To compute only them, for results from an earlier run:
 ```
-.venv/bin/python monitor.py --sample-clients 0.1     # local test dataset
-.venv/bin/python monitor.py                         # full dataset
+.venv/bin/python main.py --stages monitor --sample-clients 0.1     # local test dataset
+.venv/bin/python main.py --stages monitor                         # full dataset
 ```
+`monitor.py`, with the same flags as `main.py`, does the same on its own.
 - **Clients and churn by month:** clients, BAJA+1 and BAJA+2 in every month of the features file.
 - **Broken variables:** a variable is broken in a month when it takes a single value that month (all zeros, or all empty) while in most other months it takes several. The lags are checked too: the lag k of month m shows month m − k, so the months missing from the file (201907, 201909) are covered as well.
 - **Drift:** PSI of every raw variable in every month against the six training months pooled (deciles of the training values, plus one bin for empty values). Below 0.10 stable, 0.10–0.25 moderate change, above 0.25 large change.
 - **Importance and predictions:** the baseline's best configuration (and each experiment's winner) is trained once with the first final seed; the gain of each variable, adding up its lags and deltas, and, for the baseline, the average predicted probability against the real share of positives on validation and test.
 
-Nothing in the experiment reads these metrics: they only describe the data and the models. **It trains, so run it after the search, and not while another run is being timed on the same machine.** It takes about 15 s on the 10% sample.
+Nothing in the experiment reads these metrics: they only describe the data and the models. **The stage trains models, so it runs after every timed piece and its time is not counted in the experiment; run it on its own only when no other run is being timed on the same machine.** It takes about 5 s on the 10% sample.
 
 ### Running on a Google Cloud VM
 1. **Copy the `undersampling` folder to the VM** (with `git`, or `gcloud compute scp --recurse undersampling <VM>:~ --zone <ZONE>`), and the raw dataset into `undersampling/data/`.
@@ -512,4 +511,3 @@ A second idea, not part of this experiment: the time saved by undersampling coul
 - Ke, G. et al. (2017). LightGBM: A Highly Efficient Gradient Boosting Decision Tree. *NeurIPS 30*. Row sampling to speed up training.
 - Seiffert, C., Khoshgoftaar, T. M., Van Hulse, J. and Napolitano, A. (2010). RUSBoost: A hybrid approach to alleviating class imbalance. *IEEE Transactions on Systems, Man, and Cybernetics, Part A*, 40(1), 185–197. Undersampling again at each boosting round.
 - Dal Pozzolo, A., Caelen, O., Johnson, R. A. and Bontempi, G. (2015). Calibrating Probability with Undersampling for Unbalanced Classification. *IEEE SSCI*. Undersampling distorts probabilities but not the order of cases.
-- Wilcoxon, F. (1945). Individual comparisons by ranking methods. *Biometrics Bulletin*, 1(6), 80–83. Paired signed-rank test.

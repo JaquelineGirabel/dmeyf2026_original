@@ -45,10 +45,11 @@ def mean_test_scores(cfg, data, conf, seeds):
 
 
 def run_final(cfg, data):
-    from .analysis import choose_r     # validation only
+    from .analysis import choose_r, tolerances     # validation only
     from .runs import runs_path
     from .utils import read_rows
-    choice = choose_r(cfg, read_rows(runs_path(cfg)))
+    runs = read_rows(runs_path(cfg))
+    choice = choose_r(cfg, runs, tolerances(cfg, runs))
     winner = choice['winner']
     sides = [('baseline', top_configs(cfg, BASELINE, 1)[0])]
     if winner is not None:

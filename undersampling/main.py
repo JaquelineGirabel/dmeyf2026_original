@@ -6,6 +6,7 @@ Examples:
     python main.py --r-mode optuna                   # Optuna picks r from the list
     python main.py --r-apply before                  # r applied once, before training
     python main.py --stages analyze                  # recompute the summary from saved results
+    python main.py --stages monitor                  # recompute only the dashboard's monitoring metrics
 
 Results: results/<base>/ holds what every experiment on the same data shares (Optuna studies, trials,
 trainings); results/<base>/<mode>_<r_apply>/ holds this experiment's log, times and summary.
@@ -19,6 +20,7 @@ from pipeline.analysis import analyze
 from pipeline.data import load_data
 from pipeline.features import build_features
 from pipeline.final_list import run_final
+from pipeline.monitoring import run_monitoring
 from pipeline.runs import run_test, run_validate
 from pipeline.search import run_search, studies
 from pipeline.utils import (environment_info, log, peak_memory_gb, read_json, setup_logging, threads, timed,
@@ -51,7 +53,7 @@ def main(argv=None):
     log.info(f"Experiment '{cfg.base_name}/{cfg.experiment_name}', stages {cfg.stages}, {threads(cfg)} threads")
     start = time.perf_counter()
 
-    needs_data = any(s in cfg.stages for s in ['search', 'validate', 'test', 'final'])
+    needs_data = any(s in cfg.stages for s in ['search', 'validate', 'test', 'final', 'monitor'])
     if 'features' in cfg.stages or needs_data:
         parquet_path, meta = build_features(cfg, timings)
         timings['features_peak_memory_gb'] = meta.get('peak_memory_gb')
@@ -80,6 +82,10 @@ def main(argv=None):
 
     if 'analyze' in cfg.stages:
         analyze(cfg)
+    # Last, after every timed piece and after the summary (it trains each experiment's winner, read from it).
+    # Not part of the experiment's times or peak memory.
+    if 'monitor' in cfg.stages:
+        run_monitoring(cfg, parquet_path, data)
     log.info(f'Done in {time.perf_counter() - start:,.0f} s. Peak memory {peak_memory_gb():.2f} GB.')
 
 

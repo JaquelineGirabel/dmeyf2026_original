@@ -241,6 +241,7 @@ def run_monitoring(cfg, parquet_path, data):
     else:
         log.info('[monitor] no baseline search yet: importance and predictions skipped')
     path = monitoring_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
     write_json(path, out)
     log.info(f'[monitor] written to {path}')
     return out

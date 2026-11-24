@@ -96,7 +96,11 @@ st.markdown(f"""
   .verdict.bad {{background: #fdf3f2; border-color: #f0c4be; color: {BAD};}}
   .verdict.na {{background: #fff; border-color: {BORDER}; color: {INK_2};}}
   .verdict .pill {{font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #fff; border-radius: 10px;
-                  padding: 3px 10px;}}
+                  padding: 3px 10px; flex: none; align-self: flex-start; margin-top: 3px;}}
+  .verdict .parts {{flex: 1; display: grid; grid-template-columns: auto 1fr auto; gap: 6px 14px; align-items: baseline;}}
+  .verdict .parts .n {{color: {MUTED}; font-size: 13px; font-weight: 700;}}
+  .verdict .parts .q {{color: {INK}; font-size: 15px; font-weight: 600;}}
+  .verdict .parts .a {{font-size: 15px; font-weight: 700; white-space: nowrap;}}
   table.t {{width: 100%; border-collapse: collapse; font-size: 13.5px; background: #fff; border: 1px solid {BORDER};
            border-radius: 6px; overflow: hidden; font-variant-numeric: tabular-nums;}}
   table.t thead th {{font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: {MUTED}; font-weight: 700;
@@ -366,10 +370,9 @@ def old_design_view(folder, key):
             f = (lambda x: num(x, 4)) if m == 'auc' else pesos
             rows.append([names[m], f(c['baseline_mean']), f(c['undersampling_mean']),
                          (signed(c['mean_diff'], 4) if m == 'auc' else pesos(c['mean_diff'], 2)),
-                         f"[{f(c['ci_low'])}; {f(c['ci_high'])}]", num(c['wilcoxon_p'], 4),
                          status(c['non_inferior'], 'Sí', 'No')])
-        table(pd.DataFrame(rows, columns=['Medida', 'Modelo base', 'Submuestreo', 'Diferencia', 'Intervalo del 95 %',
-                                          'Wilcoxon (p)', 'Dentro de la tolerancia']))
+        table(pd.DataFrame(rows, columns=['Medida', 'Modelo base', 'Submuestreo', 'Diferencia promedio',
+                                          'Dentro de la tolerancia']))
     curve = pd.read_csv(folder / 'runs_curve.csv') if (folder / 'runs_curve.csv').exists() else pd.DataFrame()
     if not curve.empty:
         section('Curva de r con la configuración del modelo base fija', NAVY)
@@ -434,9 +437,25 @@ seeds = cfg['derived_seeds']['final']
 choice, test, curve = summary.get('choice', {}), summary.get('test'), summary.get('curve')
 verdict = summary.get('verdict', {})
 winner_r = choice.get('winner_r')
-delta = cfg['delta']
 grid_mode = summary['r_mode'] == 'grid'
 VALID, TEST = month(cfg['valid_month']), month(cfg['test_month'])
+# Tolerance of each measure: what the baseline itself varies between seeds (summary['tolerance']), or the fixed
+# --delta of older results.
+TOL = summary.get('tolerance') or {m: {'share': cfg['delta']} for m in ['profit', 'auc', 'profit_peak']}
+TOL_FROM_BASE = TOL.get('source') == 'baseline'
+
+
+def tol_of(metric):
+    return TOL['auc' if metric == 'auc' else 'profit']['share']
+
+
+def tol_txt(metric):
+    d = tol_of(metric)
+    return pct(d, 2 if d < 0.01 else 1)
+
+
+TOL_WHY = (f"lo que varía el propio modelo base entre semillas ({TOL.get('n_seeds', cfg['n_seeds_valid'])} semillas, "
+           f'{VALID})' if TOL_FROM_BASE else 'fija')
 
 header(HYPOTHESIS)
 
@@ -456,15 +475,24 @@ with tabs[T_SUMMARY]:
               'La **proporción de undersampling (r)** es la fracción de los CONTINUA que se usa para entrenar. Su valor se '
               f'elige con el mes de **{VALID}** y se confirma con el de **{TEST}**, que no interviene en la elección. A continuación se presentan '
               'el veredicto y las tres métricas que lo determinan: ganancia, AUC y tiempo.')
-    confirmed = verdict.get('hypothesis_confirmed')
-    if confirmed is None:
+    part1, part2 = verdict.get('part1_same_with_less_time'), verdict.get('part2_time_floor')
+    part3 = verdict.get('part3_below_floor_worse')
+    if part1 is None or part2 is None:
         st.markdown('<div class="verdict na">Resultado incompleto: falta alguna etapa del experimento.</div>',
                     unsafe_allow_html=True)
     else:
-        kind, pill, text = (('good', GOOD, 'La hipótesis se confirma') if confirmed else
-                            ('bad', BAD, 'La hipótesis no se confirma'))
-        st.markdown(f'<div class="verdict {kind}"><span class="pill" style="background:{pill}">Veredicto</span>{text}</div>',
-                    unsafe_allow_html=True)
+        def answer(v):
+            if v is None:
+                return f'<span class="a" style="color:{INK_2}">— No se observa</span>'
+            return (f'<span class="a" style="color:{GOOD}">✔ Se confirma</span>' if v else
+                    f'<span class="a" style="color:{BAD}">✖ No se confirma</span>')
+        parts = [('Parte 1', 'Ganancia y AUC equivalentes a los del modelo base, con un tiempo considerablemente menor', part1),
+                 ('Parte 2', 'Por debajo de cierto r, el tiempo deja de disminuir', part2),
+                 ('Parte 3', 'Por debajo de ese punto, el resultado empeora', part3)]
+        rows = ''.join(f'<span class="n">{n}</span><span class="q">{q}</span>{answer(v)}' for n, q, v in parts)
+        kind, pill = ('good', GOOD) if part1 else ('bad', BAD)
+        st.markdown(f'<div class="verdict {kind}"><span class="pill" style="background:{pill}">Veredicto</span>'
+                    f'<div class="parts">{rows}</div></div>', unsafe_allow_html=True)
 
     section('Métricas determinantes', NAVY)
     items = [('r elegido', r_txt(winner_r) if winner_r is not None else 'ninguno',
@@ -474,13 +502,13 @@ with tabs[T_SUMMARY]:
         p, a, t = test['metrics']['profit'], test['metrics']['auc'], test['time']
         items += [
             (f'Ganancia en {TEST}', signed(p['mean_diff'] / 1e6, 2) + '\u00a0M',
-             f"diferencia promedio de {p['n_pairs']} comparaciones pareadas con el modelo base "
+             f"promedio de {cfg['n_seeds']} semillas contra el del modelo base "
              f"({pct(p['mean_diff'] / p['reference_mean'], 1, sign=True)})<br>"
-             + status(p['non_inferior'], f'Dentro de la tolerancia ({pct(delta, 0)})', 'Fuera de la tolerancia'),
+             + status(p['non_inferior'], f"Dentro de la tolerancia ({tol_txt('profit')})", 'Fuera de la tolerancia'),
              ACCENT['ganancia']),
             ('AUC', signed(a['mean_diff'], 4),
-             f"diferencia promedio de {a['n_pairs']} comparaciones pareadas con el modelo base<br>"
-             + status(a['non_inferior'], f'Dentro de la tolerancia ({pct(delta, 0)})', 'Fuera de la tolerancia'),
+             f"promedio de {cfg['n_seeds']} semillas contra el del modelo base<br>"
+             + status(a['non_inferior'], f"Dentro de la tolerancia ({tol_txt('auc')})", 'Fuera de la tolerancia'),
              ACCENT['auc']),
             ('Tiempo total', pct(-t['reduction'], 0, sign=True),
              f"{dur(t['winner']['total_seconds'])} contra {dur(t['baseline']['total_seconds'])} del modelo base<br>"
@@ -492,22 +520,33 @@ with tabs[T_SUMMARY]:
                   ('Tiempo total', '—', why, ACCENT['tiempo'])]
     kpis(items, NAVY)
 
+    bf = summary.get('below_floor')
+    if bf and bf['below_r']:
+        n_b = len(bf['below_r'])
+        below_txt = (f"Por debajo de r = {r_txt(bf['r_flat'])} conservan la ganancia {len(bf['hold_valid_r'])} de {n_b} "
+                     f"valores de r en {VALID} y {len(bf['hold_test_r'])} de {n_b} en {TEST}"
+                     + (': no se observa un efecto consistente.' if bf['worse'] is None else '.'))
+    else:
+        below_txt = 'Sin valores de r por debajo del piso de tiempo.'
+
     left, right = st.columns([1.1, 1], gap='medium')
     with left:
         section('Criterios de la hipótesis y su cumplimiento', NAVY)
         rows = [('r_passed_validation', 'Algún valor de r conserva la ganancia en validación',
                  f'Se elige con el mes de {VALID}, sin utilizar el mes de prueba.'),
                 ('about_the_same_auc_and_profit', 'Ganancia y AUC equivalentes a los del modelo base',
-                 f'En {TEST}, ninguno disminuye más de {pct(delta, 0)}.'),
+                 f"En {TEST}, la ganancia no disminuye más de {tol_txt('profit')} ni el AUC más de {tol_txt('auc')}: "
+                 f'{TOL_WHY}.'),
                 ('clearly_less_time', f"Al menos {pct(cfg['time_reduction'], 0)} de reducción del tiempo",
                  'Preparación de datos + búsqueda + modelo final + predicción.'),
-                ('time_flattens', 'El tiempo deja de disminuir a partir de cierto valor de r',
-                 f"Reducir r por debajo de ese valor ahorra menos del {pct(cfg['flat_share'], 0)} del tiempo del modelo base."),
-                ('useful_zone', 'Existe una zona útil',
-                 'Un intervalo de valores de r en el que el tiempo ya no disminuye y la ganancia se mantiene.')]
+                ('part2_time_floor', 'El tiempo deja de disminuir a partir de cierto valor de r',
+                 'Es el valor de r con menor tiempo (búsqueda + entrenamiento); con valores más chicos el tiempo no baja.'),
+                ('part3_below_floor_worse', 'Por debajo de ese valor, el resultado empeora', below_txt)]
         def row_status(k):
             if winner_r is None and k in ('about_the_same_auc_and_profit', 'clearly_less_time'):
                 return '<span class="na">— No aplica</span>'
+            if k == 'part3_below_floor_worse' and verdict.get(k) is None:
+                return '<span class="na">— No se observa</span>'
             return status(verdict.get(k), 'Sí', 'No')
         st.markdown('<div class="card"><div class="checks">' + ''.join(
             f'<div class="check"><div>{row_status(k)}</div>'
@@ -527,17 +566,13 @@ with tabs[T_SUMMARY]:
                          f"AUC **{signed(a['mean_diff'], 4)}** respecto del modelo base, y el proceso completo tarda "
                          f"**{pct(abs(t['reduction']), 0)} {'menos' if t['reduction'] >= 0 else 'más'}**.")
         if curve:
-            if curve['useful_zone']:
-                lo, hi = curve['useful_zone_range']
-                lines.append(f'La **zona útil** va de r = {r_txt(lo)} a r = {r_txt(hi)}: en ese intervalo el tiempo prácticamente no disminuye y '
-                             'la ganancia se mantiene.')
+            if curve['time_flattens']:
+                lines.append(f"El tiempo deja de bajar a partir de **r = {r_txt(curve['r_flat'])}**: es el valor de r más "
+                             f"rápido; con valores más chicos el tiempo no baja.")
+                if bf and bf['below_r']:
+                    lines.append(below_txt)
             else:
-                hold = curve.get('holding_r', [])
-                held = ('en el mes de prueba ningún r mantiene a la vez la ganancia y el AUC dentro de la tolerancia'
-                        if not hold else
-                        f"solo conservan la ganancia y el AUC los valores r = {', '.join(r_txt(r) for r in sorted(hold, reverse=True))}")
-                lines.append(f"No se observa una zona útil: {held}, y el tiempo se estabiliza a partir de "
-                             f"r = {r_txt(curve['r_flat'])}.")
+                lines.append('El tiempo sigue disminuyendo hasta el r más chico evaluado: no se observa un piso.')
         exp = summary.get('exploration')
         if exp:
             lines.append(f"La evaluación de todos los valores de r demandó {dur(exp['total_seconds'])}. Es un costo único: una "
@@ -576,9 +611,10 @@ estimar qué parte del resultado se debe al azar.</li>
 carga del dato (en la materia, «variable rota»).</li>
 <li><b>PSI:</b> índice de estabilidad poblacional; mide cuánto cambió la distribución de una variable respecto de los
 meses de entrenamiento.</li>
-<li><b>Tolerancia ({pct(delta, 0)}):</b> pérdida máxima admitida para considerar que el resultado es equivalente.</li>
-<li><b>Intervalo de confianza del 95 %:</b> intervalo que contiene la diferencia real con un 95 % de confianza.</li>
-<li><b>Zona útil:</b> valores de r en los que el tiempo ya no disminuye y la ganancia se mantiene.</li>
+<li><b>Tolerancia:</b> pérdida máxima admitida para considerar que el resultado es equivalente: {TOL_WHY}.
+Ganancia: {tol_txt('profit')}; AUC: {tol_txt('auc')}.</li>
+<li><b>Piso de tiempo:</b> valor de r con el menor tiempo (búsqueda + entrenamiento); con valores más chicos el
+tiempo no baja.</li>
 </ul></div>""", unsafe_allow_html=True)
 
 # ======================= Monitoreo =======================
@@ -844,8 +880,11 @@ with tabs[T_MON]:
 
     if not mon:
         flag = '' if summary['base'] == 'full' else f" --sample-clients {cfg['sample_clients']:g}"
-        st.info('Las métricas de datos, drift e importancia aún no están disponibles para estos datos. Se calculan con '
-                f'`python monitor.py{flag}`, una vez finalizada la corrida.')
+        if cfg.get('n_trials', 100) != 100:
+            flag += f" --n-trials {cfg['n_trials']}"
+        st.info('Las métricas de datos, drift e importancia aún no están disponibles para estos datos. Se calculan '
+                'automáticamente al final de cada corrida; para resultados anteriores, con '
+                f'`python main.py --stages monitor{flag}`.')
     else:
         role = {m: 'entrenamiento' for m in mon['train_months']} | {valid_m: 'validación', test_m: 'prueba'}
         t_row = cls[cls['month'] == test_m].iloc[0]
@@ -1069,13 +1108,10 @@ de 93).</li>
         st.info('Todavía no hay entrenamientos de validación (etapa "validate").')
     else:
         table_c = pd.DataFrame(choice['table'])
-        CONF = pct(choice.get('confidence', 0.95), 1).replace(',0\u00a0', '\u00a0')
         st.markdown(f"""<div class="card"><h3>Regla de elección (fijada antes de conocer los resultados)</h3><ol style="margin-bottom:0">
-<li><b>Cumple la regla</b> el valor de r cuya pérdida de ganancia frente al modelo base no supera la tolerancia
-({pct(delta, 0)}), con un {CONF} de confianza.</li>
-<li>Entre los que la cumplen se elige el <b>más rápido</b>. Si la diferencia de tiempo es menor al
-{pct(cfg['near_fastest'], 0)} del tiempo del modelo base, se considera un empate y se elige el <b>r mayor</b>, que
-utiliza más datos con un ahorro similar.</li></ol></div>""", unsafe_allow_html=True)
+<li><b>Cumple la regla</b> el valor de r cuya pérdida de ganancia promedio frente al modelo base no supera la
+tolerancia ({tol_txt('profit')}: {TOL_WHY}), considerando cuánto varía entre semillas.</li>
+<li>Entre los que la cumplen se elige el <b>más rápido</b> (búsqueda + entrenamiento).</li></ol></div>""", unsafe_allow_html=True)
 
         und = table_c[table_c['r'] < 1].reset_index(drop=True)
         margin = float(table_c['margin'].iloc[0])
@@ -1084,63 +1120,71 @@ utiliza más datos con un ahorro similar.</li></ol></div>""", unsafe_allow_html=
         n_pass = int(und['passes'].sum())
         if winner_r is not None:
             w = table_c[table_c['winner']].iloc[0]
-            fastest = table_c[table_c['passes']].sort_values('choice_seconds').iloc[0]
-            gap_s = w['choice_seconds'] - fastest['choice_seconds']
-            tie = (f" El más rápido fue r = {r_txt(fastest['r'])} ({dur(fastest['choice_seconds'])}); r = {r_txt(w['r'])} "
-                   f"tardó {dur(w['choice_seconds'])}. La diferencia ({dur(gap_s)}) es menor al {pct(cfg['near_fastest'], 0)} "
-                   f"del tiempo del modelo base ({dur(cfg['near_fastest'] * table_c.loc[table_c['r'] == 1, 'choice_seconds'].iloc[0])}), "
-                   f"por lo que se considera un empate y se elige el r mayor, que utiliza más datos con un ahorro similar."
-                   if fastest['r'] != w['r'] else '')
-            concl('good', f"Cumplen la regla {n_pass} de {len(und)} valores de r. Se eligió **r = {r_txt(winner_r)}**.{tie}")
+            concl('good', f"Cumplen la regla {n_pass} de {len(und)} valores de r. Se eligió **r = {r_txt(winner_r)}**, el más rápido "
+                  f"de ellos ({dur(w['choice_seconds'])}).")
         else:
             concl('bad', 'Ningún valor de r conservó la ganancia del modelo base: no hay un valor para recomendar.')
 
         section('Ganancia y tiempo de cada valor de r', color,
                 'Cada fila es un valor de r. A la izquierda, la diferencia de ganancia respecto del modelo base; a la '
                 'derecha, el tiempo utilizado.')
-        legend([('Cumple la regla', color), ('No cumple', '#b9c2ce'), ('Elegido (★)', color)])
-        order = [r_txt(r) for r in und['r']]
-        state_color = [('#b9c2ce' if st_ == 'no cumple' else color) for st_ in und['state']]
+        legend([('Modelo base', NAVY), ('Cumple la regla', color), ('No cumple', '#8a97a8'), ('Elegido (★)', color)])
+        allm = table_c.reset_index(drop=True)                     # modelo base primero, luego cada r
+        allm['state'] = ['base' if r == 1 else st_ for r, st_ in zip(allm['r'], table_c['state'])]
+        order = ['modelo base' if r == 1 else r_txt(r) for r in allm['r']]
+        state_color = [(NAVY if st_ == 'base' else '#8a97a8' if st_ == 'no cumple' else color) for st_ in allm['state']]
+        has_seeds = 'seed_vs_base_mean' in allm
+        row_h = 34 if has_seeds else 30
         left, right = st.columns([1.25, 1], gap='small')
         with left:
+            seed_x = [np.asarray(d, dtype=float) / 1e6 for d in allm['seed_vs_base_mean']] if has_seeds else []
+            x_lo = min([float(d.min()) for d in seed_x] + [float(allm['diff'].min()) / 1e6, -margin / 1e6])
+            x_hi = max([float(d.max()) for d in seed_x] + [float(allm['diff'].max()) / 1e6, margin / 1e6])
+            pad = 0.06 * (x_hi - x_lo)
             fig = go.Figure()
-            fig.add_vrect(x0=-margin / 1e6, x1=float(max(und['ci_high'].max(), margin)) / 1e6 * 1.08,
-                          fillcolor=rgba(GOOD, 0.05), line_width=0)
+            fig.add_vrect(x0=-margin / 1e6, x1=x_hi + pad, fillcolor=rgba(GOOD, 0.05), line_width=0)
             fig.add_vline(x=-margin / 1e6, line=dict(color=INK_2, width=1, dash='dot'),
-                          annotation_text=f'tolerancia (−{pct(delta, 0)})', annotation_position='top left',
+                          annotation_text=f"tolerancia (−{tol_txt('profit')})", annotation_position='bottom left',
                           annotation_font=dict(color=INK_2, size=11))
             fig.add_vline(x=0, line=dict(color=AXIS, width=1))
+            if has_seeds:
+                # Each seed on its own row's line (no vertical scatter); repeated values overlap and look darker.
+                xs = np.concatenate(seed_x)
+                ys = np.repeat(order, [len(d) for d in seed_x])
+                seed_col = np.repeat([rgba(c, 0.45) for c in state_color], [len(d) for d in seed_x])
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys, mode='markers', showlegend=False,
+                    marker=dict(color=list(seed_col), size=8, line=dict(width=0)),
+                    hovertemplate='%{y}<br>una semilla: $ %{x:,.2f} M<extra></extra>'))
+            filled = [st_ != 'no cumple' for st_ in allm['state']]
             fig.add_trace(go.Scatter(
-                x=und['diff'] / 1e6, y=order, mode='markers', showlegend=False,
-                marker=dict(color=[c if st_ == 'cumple' else '#ffffff' for st_, c in zip(und['state'], state_color)],
-                            symbol=['star' if w else 'circle' for w in und['winner']],
-                            size=[17 if w else 10 for w in und['winner']],
-                            line=dict(width=2, color=state_color)),
-                error_x=dict(type='data', symmetric=False, array=(und['ci_high'] - und['diff']) / 1e6,
-                             arrayminus=(und['diff'] - und['ci_low']) / 1e6, color='#9aa6b5', thickness=1.6, width=0),
-                customdata=np.stack([und['ci_low'] / 1e6, und['ci_high'] / 1e6, und['n_trials_with_r'],
-                                     und['state']], axis=1),
-                hovertemplate='r = %{y}<br>diferencia: $ %{x:,.2f} M<br>intervalo: [%{customdata[0]:,.2f}; '
-                              '%{customdata[1]:,.2f}] M<br>%{customdata[3]}<extra></extra>'))
+                x=allm['diff'] / 1e6, y=order, mode='markers', showlegend=False,
+                marker=dict(color=[c if f_ else '#ffffff' for f_, c in zip(filled, state_color)],
+                            symbol=['star' if w else 'diamond' for w in allm['winner']],
+                            size=[19 if w else 13 for w in allm['winner']],
+                            line=dict(width=2, color=[('#ffffff' if f_ else c) for f_, c in zip(filled, state_color)])),
+                customdata=allm['state'],
+                hovertemplate='%{y}<br>promedio: $ %{x:,.2f} M<br>%{customdata}<extra></extra>'))
+            fig.update_xaxes(range=[x_lo - pad, x_hi + pad])
             fig.update_yaxes(type='category', categoryorder='array', categoryarray=order[::-1], title='r')
-            show(style(fig, 'Diferencia de ganancia frente al modelo base', f'Millones de $ (con intervalo del {CONF})', 'r',
-                       height=90 + 30 * len(order), legend_on=False))
+            show(style(fig, 'Ganancia de cada semilla respecto del promedio del modelo base', 'Millones de $', '',
+                       height=90 + row_h * len(order), legend_on=False))
         with right:
             fig = go.Figure(go.Bar(
-                x=und['choice_seconds'] / 60, y=order, orientation='h',
-                marker=dict(color=[color if w else '#c3ccd8' for w in und['winner']], cornerradius=4,
-                            line=dict(width=0)),
-                customdata=und['choice_seconds'].map(dur),
-                hovertemplate='r = %{y}: %{customdata}<extra></extra>'))
-            base_min = float(table_c.loc[table_c['r'] == 1, 'choice_seconds'].iloc[0]) / 60
-            fig.add_vline(x=base_min, line=dict(color=NAVY, width=1.5),
-                          annotation_text=f'modelo base: {dur(base_min * 60)}', annotation_position='top right',
-                          annotation_font=dict(color=NAVY, size=11))
+                x=allm['choice_seconds'] / 60, y=order, orientation='h',
+                marker=dict(color=[NAVY if r == 1 else color if w else '#c3ccd8' for r, w in zip(allm['r'], allm['winner'])],
+                            cornerradius=4, line=dict(width=0)),
+                customdata=allm['choice_seconds'].map(dur),
+                hovertemplate='%{y}: %{customdata}<extra></extra>'))
             fig.update_yaxes(type='category', categoryorder='array', categoryarray=order[::-1], showticklabels=False)
             show(style(fig, 'Tiempo utilizado' + (' (búsqueda + entrenamiento)' if grid_mode else ' (entrenamiento)'),
-                       'Minutos', '', height=90 + 30 * len(order), legend_on=False))
-        caption('un valor de r cumple la regla si todo su intervalo (la línea horizontal) queda a la derecha de la tolerancia. Entre los que '
-                'la cumplen, se elige el de menor tiempo, resaltado en ambos gráficos.')
+                       'Minutos', '', height=90 + row_h * len(order), legend_on=False))
+        caption((f"cada fila es un modelo (una configuración con sus {cfg['n_seeds_valid']} semillas); cada punto chico es una "
+                 'semilla, medida respecto del promedio del modelo base, y el rombo es el promedio del modelo. ' if has_seeds else
+                 f"cada punto es el promedio de {cfg['n_seeds_valid']} semillas. ")
+                + 'Un valor de r cumple la regla si su promedio, considerando cuánto varían sus semillas y las del modelo base, '
+                'no queda por debajo de la tolerancia. Entre los que la cumplen, se elige el de menor tiempo, resaltado en '
+                'ambos gráficos.')
 
         section('Detalle por valor de r', color,
                 f'Las columnas de elección son de **{VALID}**. La última columna muestra el resultado de cada r en **{TEST}**, '
@@ -1151,9 +1195,7 @@ utiliza más datos con un ahorro similar.</li></ol></div>""", unsafe_allow_html=
             'Pruebas de Optuna': table_c['n_trials_with_r'],
             '% contactado': table_c['list_share'].map(lambda v: pct(v, 1)),
             'Ganancia promedio': table_c['valid_profit'].map(pesos),
-            f'Diferencia en {VALID}': [('—' if r == 1 else pesos(v, 2)) for r, v in zip(table_c['r'], table_c['diff'])],
-            f'Intervalo del {CONF}': [('—' if r == 1 else f'[{num(lo / 1e6, 2)}; {num(hi / 1e6, 2)}] M')
-                                   for r, lo, hi in zip(table_c['r'], table_c['ci_low'], table_c['ci_high'])],
+            f'Diferencia promedio en {VALID}': [('—' if r == 1 else pesos(v, 2)) for r, v in zip(table_c['r'], table_c['diff'])],
             '¿Cumple?': [('referencia' if r == 1 else status(ok, 'Sí', 'No')) for r, ok in zip(table_c['r'], table_c['passes'])],
             'Tiempo': table_c['choice_seconds'].map(dur),
             f'Diferencia en {TEST} (no se usó)': [('—' if r == 1 or round(r, 6) not in test_diff else
@@ -1165,7 +1207,7 @@ utiliza más datos con un ahorro similar.</li></ol></div>""", unsafe_allow_html=
         if curve:
             ct = pd.DataFrame(curve['table'])                     # r from 1 down
             base = ct[ct['r'] == 1].iloc[0]
-            p_margin, a_margin = delta * abs(base['profit_mean']), delta * abs(base['auc_mean'])
+            p_margin, a_margin = tol_of('profit') * abs(base['profit_mean']), tol_of('auc') * abs(base['auc_mean'])
             p_ok = ct['profit_ci_low'] > -p_margin
             a_ok = ct['auc_ci_low'] > -a_margin
             saving = 1 - ct['time_seconds'] / base['time_seconds']
@@ -1173,8 +1215,10 @@ utiliza más datos con un ahorro similar.</li></ol></div>""", unsafe_allow_html=
             all_ok = p_ok & a_ok & t_ok
             section(f'Resultado de cada valor de r en el mes de prueba ({TEST})', color,
                     f"Cada r con su **mejor configuración** (una sola), entrenada con {cfg['n_seeds']} semillas y comparada con el modelo "
-                    f'base semilla por semilla. Hay una columna por cada criterio de la hipótesis: la **ganancia** y el '
-                    f"**AUC** no pueden disminuir más que la tolerancia ({pct(delta, 0)}), y el **tiempo** debe reducirse al menos "
+                    f"base (sus {cfg['n_seeds']} semillas contra las del modelo base). Hay una columna"
+                    f' por cada criterio de la hipótesis: la **ganancia** y el '
+                    f"**AUC** no pueden disminuir más que su tolerancia ({tol_txt('profit')} y {tol_txt('auc')}: {TOL_WHY}), "
+                    'y el **tiempo** debe reducirse al menos '
                     f"un {pct(cfg['time_reduction'], 0)}. La última columna indica si un valor de r cumple los tres criterios. Este mes no participó "
                     'de la elección.')
             n_all = int((all_ok & (ct['r'] < 1)).sum())
@@ -1209,9 +1253,8 @@ utiliza más datos con un ahorro similar.</li></ol></div>""", unsafe_allow_html=
             })
             table(test_df, highlight=[winner_r is not None and abs(r - winner_r) < 1e-9 for r in ct['r']])
             st.markdown(f'<div class="cap">El tiempo es el de cada r ({"su búsqueda + un entrenamiento" if grid_mode else "un entrenamiento"}), '
-                        'el mismo que se usó para elegir. Esta tabla usa la mejor configuración de cada r; el veredicto usa las '
-                        f"{test['top_k'] if test else cfg['top_k']} mejores del r elegido (pestañas Score y Tiempo), por eso "
-                        'sus cifras difieren levemente.</div>', unsafe_allow_html=True)
+                        'el mismo que se usó para elegir. Esta tabla y el veredicto usan la misma comparación: la mejor '
+                        'configuración de cada lado.</div>', unsafe_allow_html=True)
 
             # ---- validación contra prueba, por valor de r
             vt = und[['r', 'diff', 'passes', 'winner']].copy()
@@ -1263,95 +1306,55 @@ def metric_view(metric, label, color, money):
         m = test['metrics'][metric]
         wr = r_txt(test['winner_r'])
         decisive = metric in ('profit', 'auc')
-        if any('values' not in row for row in test['per_config']):
+        if 'models' not in test:
             st.info('Este resultado se calculó con la versión anterior del análisis: correr la etapa "analyze" otra vez.')
             return
-        sides = {}
-        for side in ['baseline', 'winner']:
-            frames = [pd.DataFrame({'seed': row['seeds'], f'test_{metric}': row['values'][metric], 'rank': row['rank']})
-                      for row in test['per_config'] if row['side'] == side]
-            sides[side] = pd.concat(frames) if frames else pd.DataFrame(columns=['seed', f'test_{metric}', 'rank'])
-        k = test['top_k']
+        mods = {x['side']: x for x in test['models']}
+        b_vals = np.asarray(mods['baseline']['values'][metric], dtype=float)
+        w_vals = np.asarray(mods['winner']['values'][metric], dtype=float)
 
         section(f'r elegido contra el modelo base · {TEST}', color,
-                f"Se comparan los **{k} mejores modelos** de cada lado (cada modelo es una configuración, y sus "
-                f"**{cfg['n_seeds']} semillas** forman su distribución). La comparación es pareada: el 1.er modelo del r "
-                'elegido contra el 1.º del modelo base con la misma semilla, el 2.º contra el 2.º, y así sucesivamente. Cada '
-                'par mide **el efecto de aplicar r**; el promedio de esas diferencias determina el resultado.')
+                f"Se comparan **dos modelos**: la mejor configuración del r elegido y la mejor del modelo base, cada una "
+                f"entrenada con **{cfg['n_seeds']} semillas**, que forman su distribución. Se comparan las dos "
+                'distribuciones: sus promedios, considerando cuánto varía cada una. No se emparejan semillas ni se mezclan '
+                'configuraciones.')
         rel = m['mean_diff'] / m['reference_mean']
         diff_txt = (signed(m['mean_diff'] / 1e6, 2) + '\u00a0M') if money else signed(m['mean_diff'], 4)
-        ci_txt = (f"[{signed(m['ci_low'] / 1e6, 2)}; {signed(m['ci_high'] / 1e6, 2)}] M" if money
-                  else f"[{signed(m['ci_low'], 4)}; {signed(m['ci_high'], 4)}]")
         left_k, right_k = st.columns([1, 2], gap='small')
         with left_k:
-            kpis([('Efecto de aplicar r (determinante)' if decisive else 'Efecto de aplicar r', diff_txt,
-                   f"promedio de {m['n_pairs']} comparaciones pareadas"
+            kpis([('Diferencia de promedios (determinante)' if decisive else 'Diferencia de promedios', diff_txt,
+                   f"r elegido menos modelo base, {cfg['n_seeds']} semillas cada uno"
                    + (f" ({pct(rel, 1, sign=True)} de la ganancia del modelo base)" if money else '')
-                   + f'<br>Intervalo del 95 %: {ci_txt}<br>'
-                   + (status(m['non_inferior'], f'Dentro de la tolerancia ({pct(delta, 0)})', 'Fuera de la tolerancia')
+                   + '<br>'
+                   + (status(m['non_inferior'], f'Dentro de la tolerancia ({tol_txt(metric)})', 'Fuera de la tolerancia')
                       if decisive else '<span class="na">Informativa: no interviene en el veredicto</span>'), color)], color)
         with right_k:
-            rows = []
-            for rank in range(1, k + 1):
-                b = sides['baseline'][sides['baseline']['rank'] == rank].set_index('seed')[f'test_{metric}']
-                w = sides['winner'][sides['winner']['rank'] == rank].set_index('seed')[f'test_{metric}']
-                common = b.index.intersection(w.index)
-                d = float((w.loc[common] - b.loc[common]).mean()) if len(common) else float('nan')
-                rows.append([f'{rank}.ª mejor', fmt(b.mean()), fmt(w.mean()),
-                             (pesos(d, 2) + f" ({pct(d / b.mean(), 1, sign=True)})") if money else signed(d, 4)])
-            table(pd.DataFrame(rows, columns=['Configuración', f"Modelo base ({cfg['n_seeds']} semillas)",
-                                              f"r elegido ({cfg['n_seeds']} semillas)", 'Efecto de aplicar r']))
-            st.markdown('<div class="cap">Cada fila compara una configuración con su par, cada una promediando sus '
-                        f"{cfg['n_seeds']} semillas.</div>", unsafe_allow_html=True)
+            rows = [[name, fmt(v.mean()), fmt(float(np.median(v))), f'{fmt(v.min())} – {fmt(v.max())}']
+                    for name, v in [('Modelo base', b_vals), (f'r elegido ({wr})', w_vals)]]
+            table(pd.DataFrame(rows, columns=['Modelo', 'Promedio', 'Mediana', 'Rango entre semillas']))
+            st.markdown(f"<div class=\"cap\">Cada modelo es su mejor configuración con sus {cfg['n_seeds']} semillas.</div>",
+                        unsafe_allow_html=True)
         if decisive:
             concl('good' if m['non_inferior'] else 'bad',
                   f"Con r = {wr}, {'el AUC' if metric == 'auc' else 'la ' + label.lower()} {'se mantiene dentro de la tolerancia' if m['non_inferior'] else 'disminuye más que la tolerancia'}"
-                  f": la diferencia promedio es de {diff_txt} frente al modelo base.")
+                  f": la diferencia de promedios es de {diff_txt} frente al modelo base.")
 
-        section('Distribución de los resultados', color,
-                f"Cada configuración entrenada con {cfg['n_seeds']} semillas, lo que permite dimensionar la variabilidad atribuible al azar.")
-        left, right = st.columns(2, gap='small')
-        with left:
-            fig = go.Figure()
-            for side, c, name in [('baseline', NAVY, 'Modelo base'), ('winner', color, f'r elegido ({wr})')]:
-                d = sides[side]
-                fig.add_trace(go.Violin(
-                    x=d['rank'].map(lambda r_: f'{r_}.ª mejor'), y=d[f'test_{metric}'], name=name,
-                    line=dict(color=c, width=1.5), offsetgroup=side, scalegroup=side,
-                    fillcolor=rgba(c, 0.12), points='all', pointpos=0, jitter=0.35,
-                    marker=dict(color=c, size=6, opacity=0.8, line=dict(width=1, color='#fff')),
-                    box=dict(visible=True, width=0.12, line=dict(color=c, width=1.5), fillcolor='#fff'),
-                    meanline=dict(visible=True, color=c), spanmode='hard',
-                    customdata=np.stack([d['rank'], d['seed']], axis=1),
-                    hovertemplate=('%{customdata[0]}.ª mejor configuración<br>'
-                                   + ('$ %{y:,.0f}' if money else '%{y:.4f}') + '<extra>' + name + '</extra>')))
-            fig.update_layout(violinmode='group')
-            show(style(fig, f'{label} de cada entrenamiento, por configuración', 'Configuración', label))
-            caption('cada punto es un entrenamiento (una semilla); la forma indica dónde se concentran los valores y la línea, el '
-                    'promedio de esa configuración.')
-        with right:
-            b = sides['baseline'].set_index(['rank', 'seed'])[f'test_{metric}']
-            w = sides['winner'].set_index(['rank', 'seed'])[f'test_{metric}']
-            common = b.index.intersection(w.index)
-            diff = (w.loc[common] - b.loc[common]).to_numpy()
-            fig = go.Figure()
-            fig.add_vrect(x0=-m['margin'], x1=max(float(diff.max()) if len(diff) else 0, m['margin']) * 1.15 + 1e-12,
-                          fillcolor=rgba(GOOD, 0.05), line_width=0)
-            fig.add_trace(go.Histogram(x=diff, nbinsx=24, marker=dict(color=rgba(color, 0.55), line=dict(color='#fff', width=1)),
-                                       name='Pares', hovertemplate='%{y} pares<extra></extra>'))
-            fig.add_vline(x=0, line=dict(color=AXIS, width=1))
-            fig.add_vline(x=-m['margin'], line=dict(color=INK_2, width=1, dash='dot'),
-                          annotation_text=f'tolerancia (−{pct(delta, 0)})', annotation_position='top left',
+        section('Distribución de los dos modelos', color,
+                f"Cada punto es una semilla; la caja resume las {cfg['n_seeds']} semillas de cada modelo. La línea punteada es el "
+                'promedio del modelo base menos la tolerancia: el promedio del r elegido no debe quedar por debajo de ella.')
+        fig = go.Figure()
+        for name, vals, c in [('Modelo base', b_vals, NAVY), (f'r elegido ({wr})', w_vals, color)]:
+            fig.add_trace(go.Box(x=vals, name=name, orientation='h', marker=dict(color=c, size=7, opacity=0.75),
+                                 line=dict(color=c, width=1.5), fillcolor=rgba(c, 0.12), boxpoints='all', jitter=0.3,
+                                 pointpos=0, boxmean=True,
+                                 hovertemplate=name + ': ' + ('$ %{x:,.0f}' if money else '%{x:.4f}') + '<extra></extra>'))
+        if decisive:
+            fig.add_vline(x=m['reference_mean'] - m['margin'], line=dict(color=INK_2, width=1, dash='dot'),
+                          annotation_text=f'tolerancia (−{tol_txt(metric)})', annotation_position='top left',
                           annotation_font=dict(color=INK_2, size=11))
-            fig.add_vline(x=m['mean_diff'], line=dict(color=color, width=2.5),
-                          annotation_text='promedio', annotation_position='bottom right',
-                          annotation_font=dict(color=INK, size=11))
-            fig.add_vrect(x0=m['ci_low'], x1=m['ci_high'], fillcolor=rgba(color, 0.18), line_width=0)
-            fig.update_layout(bargap=0.05)
-            show(style(fig, 'Diferencias pareadas (r elegido − modelo base)',
-                       'Diferencia' + (' en $' if money else ' de AUC'), 'Cantidad de pares', legend_on=False))
-            caption('cada par es la misma configuración y la misma semilla en los dos modelos. La franja de color es el '
-                    'intervalo del 95 % del promedio: si queda a la derecha de la tolerancia, el resultado se considera equivalente.')
+        fig.update_yaxes(categoryorder='array', categoryarray=[f'r elegido ({wr})', 'Modelo base'])
+        show(style(fig, f'{label} de cada semilla, por modelo', label + (' ($)' if money else ''), '', legend_on=False,
+                   height=320))
 
     if curve:
         tab = pd.DataFrame(curve['table']).sort_values('r')
@@ -1360,15 +1363,10 @@ def metric_view(metric, label, color, money):
                 f"{cfg['n_seeds']} semillas. De izquierda a derecha, cada árbol usa menos CONTINUA.")
         base_mean = float(tab.loc[tab['r'] == 1, f'{metric}_mean'].iloc[0])
         fig = go.Figure()
-        fig.add_hrect(y0=base_mean * (1 - delta), y1=base_mean * (1 + delta), fillcolor=BAND, line_width=0)
+        fig.add_hrect(y0=base_mean * (1 - tol_of(metric)), y1=base_mean * (1 + tol_of(metric)), fillcolor=BAND, line_width=0)
         fig.add_hline(y=base_mean, line=dict(color=NAVY, width=1.5),
                       annotation_text=f'modelo base: {fmt(base_mean)}', annotation_position='bottom left',
                       annotation_font=dict(color=NAVY, size=11))
-        if curve['useful_zone']:
-            lo, hi = curve['useful_zone_range']
-            fig.add_vrect(x0=lo, x1=hi, fillcolor=ZONE, line_width=0)
-            fig.add_annotation(x=np.log10(hi), y=0.98, xref='x', yref='paper', text='zona útil', showarrow=False,
-                               xanchor='left', yanchor='top', xshift=4, font=dict(color=GOOD, size=12))
         fig.add_trace(go.Scatter(x=pd.concat([tab['r'], tab['r'][::-1]]),
                                  y=pd.concat([tab[f'{metric}_max'], tab[f'{metric}_min'][::-1]]), fill='toself',
                                  fillcolor=rgba(color, 0.15), line=dict(width=0), hoverinfo='skip',
@@ -1380,19 +1378,22 @@ def metric_view(metric, label, color, money):
                                                + '<br>%{customdata[1]} pruebas de Optuna con este r<extra></extra>'))
         if winner_r is not None:
             mark_r(fig, winner_r, f'r elegido ({r_txt(winner_r)})', color)
-        show(r_axis(style(fig, f'{label} según r (la franja gris es ±{pct(delta, 0)} del modelo base)', '', label, height=420)))
+        if curve['time_flattens']:
+            mark_r(fig, curve['r_flat'], f"piso de tiempo (r = {r_txt(curve['r_flat'])})", INK_2, top=True)
+        show(r_axis(style(fig, f'{label} según r (la franja gris es ±{tol_txt(metric)} del modelo base)', '', label, height=420)))
         hold = curve.get('holding_r', [])
         held = ('ningún r mantiene a la vez la ganancia y el AUC dentro de la tolerancia' if not hold else
                 f"mantienen la ganancia y el AUC r = {', '.join(r_txt(r) for r in sorted(hold, reverse=True))}")
-        caption(f"la línea azul marino es el modelo base; {held}"
-                + (f". La zona útil va de r = {r_txt(curve['useful_zone_range'][0])} a "
-                   f"r = {r_txt(curve['useful_zone_range'][1])}." if curve['useful_zone'] else '.'))
+        caption(f"la línea azul marino es el modelo base; {held} en {TEST}. La línea punteada gris marca el piso de "
+                'tiempo. El r elegido es el más rápido que conserva la ganancia en '
+                f'{VALID}; los r por debajo del piso no ahorran tiempo y su resultado cambia de un mes a otro.')
 
 
 with tabs[T_METRICS]:
     page_head('Score', 'Ganancia y AUC, con y sin submuestreo',
               f'Las dos métricas que determinan si el resultado es equivalente, evaluadas en {TEST}, el mes de prueba. Cada una '
-              f'debe mantenerse dentro de la tolerancia ({pct(delta, 0)}) frente al modelo base.')
+              f"debe mantenerse dentro de su tolerancia frente al modelo base (ganancia {tol_txt('profit')}, AUC "
+              f"{tol_txt('auc')}): {TOL_WHY}.")
     block('Ganancia', ACCENT['ganancia'])
     st.markdown(f"""<div class="card"><h3>Cómo se calcula la ganancia de un modelo</h3>
 <p>Un <b>modelo</b> es una configuración de hiperparámetros; sus semillas forman su distribución. Contactar a un
@@ -1403,20 +1404,20 @@ donde la curva promedio es máxima es el <b>tamaño de la lista</b> del modelo. 
 <li><b>En {TEST}:</b> cada una de sus {cfg['n_seeds']} semillas ordena a los clientes y contacta a su propio porcentaje
 superior, con ese mismo porcentaje; se cuentan los BAJA+2 reales y se calcula la ganancia.</li>
 <li>Eso da {cfg['n_seeds']} ganancias: la <b>distribución del modelo</b> en {TEST}.</li>
-<li>El modelo base hace lo mismo con su propio porcentaje, y ambas distribuciones se comparan semilla por semilla.</li>
+<li>El modelo base hace lo mismo con su propio porcentaje, y se comparan las dos distribuciones de ganancias.</li>
 </ol><p style="margin-bottom:0;color:{MUTED};font-size:13.5px">El AUC no usa ningún porcentaje. La ganancia máxima (el
 punto más alto de la curva, conociendo el resultado) se muestra solo como referencia. El modelo se entrena para
 detectar BAJA+1 y BAJA+2, pero la ganancia solo premia a los BAJA+2.</p></div>""", unsafe_allow_html=True)
 
-    if test and all('values' in row for row in test['per_config']):
+    if test and 'models' in test:
         color_g = ACCENT['ganancia']
-        section(f'Los {test["top_k"]} mejores modelos de cada lado · {TEST}', color_g,
+        section(f'Los dos modelos comparados · {TEST}', color_g,
                 f"Ganancia de cada modelo en {TEST}, con su porcentaje de clientes fijado en {VALID}. Cada caja resume "
                 f"sus {cfg['n_seeds']} semillas.")
         wr_txt = r_txt(test['winner_r'])
         boxes, rows = [], []
-        for row in sorted(test['per_config'], key=lambda r_: (r_['side'] != 'baseline', r_['rank'])):
-            name = (f"Base · {row['rank']}.º" if row['side'] == 'baseline' else f"r = {wr_txt} · {row['rank']}.º")
+        for row in sorted(test['models'], key=lambda r_: r_['side'] != 'baseline'):
+            name = 'Modelo base' if row['side'] == 'baseline' else f'r = {wr_txt}'
             vals = np.array(row['values']['profit'])
             boxes.append((name, vals, NAVY if row['side'] == 'baseline' else color_g))
             tr = trials.get(row['study'])
@@ -1467,7 +1468,7 @@ detectar BAJA+1 y BAJA+2, pero la ganancia solo premia a los BAJA+2.</p></div>""
                     st.download_button(f"Descargar lista ({'modelo base' if side_key == 'baseline' else 'r elegido'})",
                                        path_.read_bytes(), file_name=path_.name, mime='text/csv')
         caption('el máximo posible se calcula conociendo el resultado y solo sirve de referencia. La comparación que '
-                f"define el veredicto es la de las distribuciones de los {cfg['top_k']} mejores modelos de cada lado.")
+                f"define el veredicto es la de las distribuciones de las {cfg['n_seeds']} semillas de cada modelo.")
 
     which = st.radio('Medida de ganancia', ['profit', 'profit_peak'], horizontal=True,
                      format_func={'profit': 'Ganancia con el porcentaje fijado en ' + VALID + ' (define el veredicto)',
@@ -1540,7 +1541,7 @@ with tabs[T_TIME]:
                                      customdata=np.stack([tab['r'].map(r_txt), tab['time_seconds'].map(dur)], axis=1),
                                      hovertemplate='r = %{customdata[0]}: %{customdata[1]}<extra></extra>'))
             if curve['time_flattens']:
-                mark_r(fig, curve['r_flat'], f"se estabiliza desde r = {r_txt(curve['r_flat'])}", INK_2, top=True)
+                mark_r(fig, curve['r_flat'], f"piso de tiempo: r = {r_txt(curve['r_flat'])}", INK_2, top=True)
             if winner_r is not None:
                 mark_r(fig, winner_r, f'r elegido ({r_txt(winner_r)})', color)
             show(r_axis(style(fig, 'Tiempo según r' + (' (búsqueda + entrenamiento)' if grid_mode else ' (entrenamiento)'),
@@ -1578,6 +1579,72 @@ with tabs[T_SEARCH]:
     caption(f"parámetros fijos en todas las búsquedas: hasta {num(cfg['max_rounds'], 0)} árboles, con parada temprana si el AUC de "
             f"{VALID} no mejora en {cfg['early_stopping_rounds']} árboles consecutivos. En escala logarítmica, Optuna explora "
             'con la misma intensidad el tramo entre 10 y 100 que el tramo entre 100 y 1000.')
+    exp_name = key.split('/')[1]
+    own = {s: t for s, t in trials.items() if (s == 'baseline' or s.startswith(exp_name)) and len(t)}
+    if own:
+        # ---- ¿el rango alcanza? Mejores 5 pruebas de cada búsqueda, y su posición dentro del rango
+        TOP_N, EDGE, FLAG = 5, 0.10, 0.30
+        top = pd.concat([t.nlargest(TOP_N, 'valid_auc_score') for t in own.values()])
+        rows_edge, alerts_edge = [], []
+        for k, (lo, hi, kind, log_) in space.items():
+            if k not in top:
+                continue
+            v = top[k].astype(float)
+            pos = (np.log(v) - np.log(lo)) / (np.log(hi) - np.log(lo)) if log_ else (v - lo) / (hi - lo)
+            low_share, high_share = float((pos < EDGE).mean()), float((pos > 1 - EDGE).mean())
+            name = HP_INFO.get(k, (k,))[0]
+            if max(low_share, high_share) > FLAG:
+                side, edge_v = ('inferior', lo) if low_share >= high_share else ('superior', hi)
+                verdict_txt = f'<span class="ko">▲ Concentradas contra el borde {side}</span>'
+                alerts_edge.append(('warn', 'Búsqueda', f'{name}: las mejores pruebas se concentran contra el borde {side} '
+                                    f'({hp_txt(edge_v)})',
+                                    f'El {pct(max(low_share, high_share), 0)} de las mejores pruebas está en el 10 % del rango más '
+                                    f'cercano a ese borde; si el reparto fuera parejo, sería cerca del 10 %. Optuna '
+                                    'probablemente habría ido más allá del borde si el rango lo permitiera.'))
+            else:
+                verdict_txt = '<span class="ok">✔ Repartidas en el interior</span>'
+            rows_edge.append([name, f'{hp_txt(lo)} a {hp_txt(hi)}', hp_txt(float(v.median())),
+                              pct(low_share, 0), pct(high_share, 0), verdict_txt])
+        section('¿El rango es suficiente?', color,
+                f'Se toman las {TOP_N} mejores pruebas de cada una de las {len(own)} búsquedas y se observa dónde cae cada '
+                'hiperparámetro dentro de su rango. Si muchas quedan pegadas a un borde, el rango podría ser corto de ese lado.')
+        if alerts_edge:
+            alert_list(alerts_edge)
+        table(pd.DataFrame(rows_edge, columns=['Hiperparámetro', 'Rango', 'Mediana de las mejores pruebas',
+                                               'Cerca del borde inferior', 'Cerca del borde superior', 'Evaluación']))
+        caption(f'«cerca del borde» = dentro del 10 % del rango más próximo a ese borde (en escala logarítmica cuando el rango '
+                f'lo es). Se señala el borde cuando concentra más del {pct(FLAG, 0)} de las mejores pruebas.')
+
+        # ---- ¿alcanzan las pruebas? Mejora del mejor AUC en el último 40 % de cada búsqueda
+        def r_of(s):
+            return 1.0 if s == 'baseline' else float(own[s]['r'].iloc[0])
+        order_s = sorted(own, key=lambda s: (s != 'baseline', -r_of(s)))
+        rows_conv = []
+        for s in order_s:
+            dd = own[s].sort_values('trial')
+            best_cum = dd['valid_auc_score'].cummax().to_numpy()
+            n_cut = max(int(round(0.6 * len(dd))), 1)
+            rows_conv.append({'study': s, 'n': len(dd), 'cut': n_cut, 'best': best_cum[-1],
+                              'best_trial': int(dd.loc[dd['valid_auc_score'].idxmax(), 'trial']),
+                              'gain': best_cum[-1] - best_cum[n_cut - 1]})
+        conv = pd.DataFrame(rows_conv)
+        n_cut0, n0 = int(conv['cut'].iloc[0]), int(conv['n'].iloc[0])
+        section('¿Alcanzan las pruebas?', color,
+                f'Cuánto mejoró el mejor AUC de cada búsqueda en sus últimas pruebas (de la {n_cut0 + 1} a la {n0}). '
+                'Si la mejora es mínima, más pruebas no cambiarían el resultado; si es grande, la búsqueda seguía avanzando.')
+        fig = go.Figure(go.Bar(
+            x=[short_study(s) for s in conv['study']], y=conv['gain'],
+            marker=dict(color=[NAVY if s == 'baseline' else color for s in conv['study']], line=dict(width=0)),
+            customdata=np.stack([conv['best'], conv['best_trial'], conv['cut'], conv['n']], axis=1),
+            hovertemplate=('%{x}<br>mejora en las últimas pruebas: %{y:.4f}<br>mejor AUC: %{customdata[0]:.4f} '
+                           '(prueba %{customdata[1]})<extra></extra>')))
+        fig.update_xaxes(type='category')
+        fig.update_yaxes(tickformat='.4f', rangemode='tozero')
+        show(style(fig, f'Mejora del mejor AUC en el último 40 % de las pruebas', '', 'Mejora del AUC', height=340,
+                   legend_on=False))
+        late = int((conv['best_trial'] >= conv['cut']).sum())
+        caption(f'en {late} de las {len(conv)} búsquedas la mejor prueba apareció en ese último tramo. La comparación entre r '
+                'sigue siendo pareja porque todas las búsquedas tienen la misma cantidad de pruebas.')
     if not trials:
         st.info('Todavía no hay pruebas de Optuna (etapa "search").')
     else:
@@ -1668,10 +1735,11 @@ with tabs[T_RUN]:
         ['Validación (para elegir r)', VALID],
         ['Prueba (para confirmar)', TEST],
         ['Pruebas de Optuna por búsqueda', num(cfg['n_trials'], 0)],
-        ['Semillas', f"{cfg['n_seeds_valid']} para elegir, {cfg['n_seeds']} para confirmar"],
+        ['Semillas', f"{cfg['n_seeds']}, las mismas para elegir y para confirmar" if cfg['n_seeds_valid'] == cfg['n_seeds']
+                     else f"{cfg['n_seeds_valid']} para elegir, {cfg['n_seeds']} para confirmar"],
         ['Medida de ganancia', f"ganancia en el porcentaje de clientes de cada modelo: el máximo de su curva promedio "
                                f"de {cfg['n_seeds_valid']} semillas en {VALID}, aplicado a sus {cfg['n_seeds']} semillas en {TEST}"],
-        ['Tolerancia en ganancia y AUC', pct(delta, 0)],
+        ['Tolerancia en ganancia y AUC', f"ganancia {tol_txt('profit')}, AUC {tol_txt('auc')}: {TOL_WHY}"],
         ['Ahorro de tiempo exigido', pct(cfg['time_reduction'], 0)],
     ], columns=['Dato', 'Valor']), text=True)
 

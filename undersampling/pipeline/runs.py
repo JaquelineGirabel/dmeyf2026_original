@@ -7,8 +7,8 @@ results/<base>/runs.csv (shared by every experiment on the same data; rows are k
 
 - 'validate': every candidate (the baseline's best configuration and the best configuration of each r)
   with the first n_seeds_valid seeds. Only the validation scores are used, to choose r.
-- 'test': the winner's and the baseline's top_k configurations, plus every candidate (the r curve), with
-  all n_seeds seeds. The test scores are read only by the final comparison and the curve.
+- 'test': every candidate (the r curve; the winner's and the baseline's best configurations are candidates),
+  with all n_seeds seeds. The test scores are read only by the final comparison and the curve.
 Runs are appended as soon as they finish; on a rerun, runs already stored are skipped.
 
 Every training also stores its profit curve on each month (profit contacting 0.1%, 0.2%, ..., 20% of the
@@ -132,13 +132,14 @@ def run_validate(cfg, data):
 
 
 def run_test(cfg, data):
-    from .analysis import choose_r   # the choice reads only validation scores
-    choice = choose_r(cfg, read_rows(runs_path(cfg)))
+    from .analysis import choose_r, tolerances   # the choice reads only validation scores
+    runs = read_rows(runs_path(cfg))
+    choice = choose_r(cfg, runs, tolerances(cfg, runs))
     winner = choice['winner']
-    confs = list(candidates(cfg)) + top_configs(cfg, BASELINE, cfg.top_k)
+    confs = list(candidates(cfg))
     if winner is not None:
         log.info(f"[test] winner chosen on validation: r = {winner['r']:g}")
-        confs += winner_configs(cfg, winner, cfg.top_k)
+        confs += winner_configs(cfg, winner, 1)
     else:
         log.info('[test] no r passed on validation; only the r curve is measured')
     train_all(cfg, data, confs, cfg.test_seeds, 'test')
